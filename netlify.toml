@@ -1,0 +1,16 @@
+[build]
+  command = "pnpm run build:static"
+  # Vite writes the client bundle to dist/public (dist/ itself only holds the Express server bundle)
+  publish = "dist/public"
+
+# Unknown API paths return a real 404 instead of the SPA's index.html
+[[redirects]]
+  from = "/api/*"
+  to = "/404"
+  status = 404
+
+# Client-side routes (/register, /admin, ...) are handled by the React router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
