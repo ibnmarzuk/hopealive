@@ -135,7 +135,7 @@ class SDKServer {
     } as ExchangeTokenResponse);
     const loginMethod = this.deriveLoginMethod(
       (data as any)?.platforms,
-      (data as any)?.platform ?? data.platform ?? null
+      (data as any)?.platform ?? null
     );
     return {
       ...(data as any),
@@ -247,7 +247,7 @@ class SDKServer {
 
     const loginMethod = this.deriveLoginMethod(
       (data as any)?.platforms,
-      (data as any)?.platform ?? data.platform ?? null
+      (data as any)?.platform ?? null
     );
     return {
       ...(data as any),
