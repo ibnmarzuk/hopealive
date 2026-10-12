@@ -1,6 +1,49 @@
-import type { CookieOptions, Request } from "express";
+// One-time nonce cookie that binds an OAuth login to the browser that started
+// it. The `__Host-` prefix forces the cookie host-only (Secure, Path=/, no
+// Domain), so a sibling *.manus.space site cannot plant a matching value in a
+// victim's browser.
+export const OAUTH_STATE_COOKIE = "__Host-oauth_state";
 
-export function getSessionCookieOptions(_req: Request): CookieOptions {
-  // Preview is public HTTPS in a cross-site frame even when the upstream request is HTTP.
-  return { httpOnly: true, path: "/", sameSite: "none", secure: true };
-}
+// `state` carries the callback redirect URI (used at token exchange) plus the
+// CSRF nonce. Defined here so the client encoder and server decoder never drift.
+export type OAuthState = { redirectUri: string; nonce?: string };
+
+const safeBase64Encode = (value: string): string => {
+  if (typeof btoa === "function") return btoa(value);
+  return Buffer.from(value, "utf8").toString("base64");
+};
+
+const safeBase64Decode = (value: string): string => {
+  if (typeof atob === "function") return atob(value);
+  return Buffer.from(value, "base64").toString("utf8");
+};
+
+export const encodeOAuthState = (state: OAuthState): string =>
+  safeBase64Encode(JSON.stringify(state));
+
+export const decodeOAuthState = (state: string): OAuthState => {
+  let decoded: string;
+  try {
+    decoded = safeBase64Decode(state);
+  } catch {
+    // Malformed base64 (e.g. attacker-supplied garbage). Return no nonce so the
+    // callback's CSRF guard rejects it with 403 — never throw, since the caller
+    // runs outside the request handler's try/catch.
+    return { redirectUri: "" };
+  }
+  try {
+    const parsed = JSON.parse(decoded);
+    if (parsed && typeof parsed.redirectUri === "string") return parsed;
+  } catch {
+    // Legacy links: `state` was a bare base64(redirectUri) with no nonce.
+  }
+  return { redirectUri: decoded };
+};
+
+export const COOKIE_NAME = "webdev_app_session";
+export const ONE_YEAR_MS = 1000 * 60 * 60 * 24 * 365;
+export const AXIOS_TIMEOUT_MS = 30_000;
+
+export const UNAUTHED_ERR_MSG = "Please login (10001)";
+export const NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
+

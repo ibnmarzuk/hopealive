@@ -1,37 +1,65 @@
-export const COOKIE_NAME = "webdev_app_session";
-export const ONE_YEAR_MS = 1000 * 60 * 60 * 24 * 365;
-export const AXIOS_TIMEOUT_MS = 30_000;
-export const UNAUTHED_ERR_MSG = 'Please login (10001)';
-export const NOT_ADMIN_ERR_MSG = 'You do not have required permission (10002)';
+import express, { type Express } from "express";
+import fs from "fs";
+import { type Server } from "http";
+import { nanoid } from "nanoid";
+import path from "path";
+import { fileURLToPath } from "node:url";
+import { createServer as createViteServer } from "vite";
+import viteConfig from "../../vite.config";
 
-// One-time nonce cookie that binds an OAuth login to the browser that started
-// it. The `__Host-` prefix forces the cookie host-only (Secure, Path=/, no
-// Domain), so a sibling *.manus.space site cannot plant a matching value in a
-// victim's browser.
-export const OAUTH_STATE_COOKIE = "__Host-oauth_state";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// `state` carries the callback redirect URI (used at token exchange) plus the
-// CSRF nonce. Defined here so the client encoder and server decoder never drift.
-export type OAuthState = { redirectUri: string; nonce?: string };
+export async function setupVite(app: Express, server: Server) {
+  const serverOptions = {
+    middlewareMode: true,
+    hmr: { server },
+    allowedHosts: true as const,
+  };
 
-export const encodeOAuthState = (state: OAuthState): string =>
-  btoa(JSON.stringify(state));
+  const vite = await createViteServer({
+    ...viteConfig,
+    configFile: false,
+    server: serverOptions,
+    appType: "custom",
+  });
 
-export const decodeOAuthState = (state: string): OAuthState => {
-  let decoded: string;
-  try {
-    decoded = atob(state);
-  } catch {
-    // Malformed base64 (e.g. attacker-supplied garbage). Return no nonce so the
-    // callback's CSRF guard rejects it with 403 — never throw, since the caller
-    // runs outside the request handler's try/catch.
-    return { redirectUri: "" };
+  app.use(vite.middlewares);
+  app.use("*", async (req, res, next) => {
+    const url = req.originalUrl;
+
+    try {
+      const clientTemplate = path.resolve(__dirname, "../..", "client", "index.html");
+
+      // always reload the index.html file from disk incase it changes
+      let template = await fs.promises.readFile(clientTemplate, "utf-8");
+      template = template.replace(
+        `src="/src/main.tsx"`,
+        `src="/src/main.tsx?v=${nanoid()}`
+      );
+      const page = await vite.transformIndexHtml(url, template);
+      res.status(200).set({ "Content-Type": "text/html" }).end(page);
+    } catch (e) {
+      vite.ssrFixStacktrace(e as Error);
+      next(e);
+    }
+  });
+}
+
+export function serveStatic(app: Express) {
+  const distPath = path.resolve(__dirname, "../..", "dist", "public");
+
+  if (!fs.existsSync(distPath)) {
+    console.error(
+      `Could not find the build directory: ${distPath}, make sure to build the client first`
+    );
   }
-  try {
-    const parsed = JSON.parse(decoded);
-    if (parsed && typeof parsed.redirectUri === "string") return parsed;
-  } catch {
-    // Legacy links: `state` was a bare base64(redirectUri) with no nonce.
-  }
-  return { redirectUri: decoded };
-};
+
+  app.use(express.static(distPath));
+
+  // fall through to index.html if the file doesn't exist
+  app.use("*", (_req, res) => {
+    res.sendFile(path.resolve(distPath, "index.html"));
+  });
+}
+
