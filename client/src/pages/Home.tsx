@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-const heroImage = "/manus-storage/async-images/VgH3TwUkq1PXoZLmNXCcSY/image-1.webp";
+const heroImage = "/hopealive-classroom.jpg";
 
 const rhythmCards = [
   {
