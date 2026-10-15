@@ -1,5 +1,7 @@
 [build]
-  command = "pnpm run build:static"
+  # Runs pnpm through npx so the build works even where pnpm isn't preinstalled,
+  # and installs from the lockfile so the patched wouter version is used
+  command = "npx -y pnpm@10.18.0 install --frozen-lockfile && npx -y pnpm@10.18.0 run build:static"
   # Vite writes the client bundle to dist/public (dist/ itself only holds the Express server bundle)
   publish = "dist/public"
 
