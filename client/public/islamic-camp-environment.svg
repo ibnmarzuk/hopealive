@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="100%" height="100%">
+  <defs>
+    <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#223b31"/>
+      <stop offset="60%" stop-color="#2d4d41"/>
+      <stop offset="100%" stop-color="#3d6152"/>
+    </linearGradient>
+    <linearGradient id="sunGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f6dfcc"/>
+      <stop offset="100%" stop-color="#e7b58e"/>
+    </linearGradient>
+    <linearGradient id="sageGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c7d5c4"/>
+      <stop offset="100%" stop-color="#a8baaa"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f3d7b8"/>
+      <stop offset="100%" stop-color="#e7b58e"/>
+    </linearGradient>
+    
+    <!-- Islamic Pattern -->
+    <pattern id="islamicPattern" x="0" y="0" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M40 0 L80 40 L40 80 L0 40 Z" fill="none" stroke="#e7b58e" stroke-width="1" stroke-opacity="0.15"/>
+      <path d="M40 10 L70 40 L40 70 L10 40 Z" fill="none" stroke="#f5f0e8" stroke-width="1" stroke-opacity="0.1"/>
+      <circle cx="40" cy="40" r="12" fill="none" stroke="#e7b58e" stroke-width="1" stroke-opacity="0.2"/>
+    </pattern>
+  </defs>
+
+  <!-- Sky Background -->
+  <rect width="1200" height="800" fill="url(#skyGrad)"/>
+  <rect width="1200" height="800" fill="url(#islamicPattern)"/>
+
+  <!-- Morning Sun / Dawn Glow -->
+  <circle cx="600" cy="280" r="220" fill="url(#sunGrad)" opacity="0.3" />
+  <circle cx="600" cy="280" r="150" fill="url(#sunGrad)" opacity="0.5" />
+
+  <!-- Stars / Sparkles -->
+  <g fill="#f5f0e8" opacity="0.6">
+    <polygon points="180,90 184,102 196,102 186,110 190,122 180,114 170,122 174,110 164,102 176,102"/>
+    <polygon points="1020,130 1023,139 1032,139 1025,145 1028,154 1020,148 1012,154 1015,145 1008,139 1017,139"/>
+    <polygon points="880,80 882,86 888,86 883,90 885,96 880,92 875,96 877,90 872,86 878,86"/>
+    <circle cx="260" cy="180" r="3"/>
+    <circle cx="940" cy="210" r="2.5"/>
+    <circle cx="380" cy="110" r="2"/>
+    <circle cx="810" cy="140" r="3"/>
+  </g>
+
+  <!-- Crescent Moon -->
+  <path d="M 640 160 A 45 45 0 1 0 685 220 A 38 38 0 1 1 640 160 Z" fill="#f5f0e8"/>
+
+  <!-- Background Islamic Architecture / Dome Silhouettes -->
+  <g fill="#1d3229">
+    <!-- Center Grand Dome -->
+    <path d="M 460 480 C 460 360, 530 310, 600 280 C 670 310, 740 360, 740 480 Z"/>
+    <!-- Crescent finial on dome -->
+    <path d="M 598 260 A 8 8 0 1 0 606 270 A 6 6 0 1 1 598 260 Z" fill="#e7b58e"/>
+    <line x1="600" y1="270" x2="600" y2="280" stroke="#e7b58e" stroke-width="2"/>
+
+    <!-- Left Dome -->
+    <path d="M 220 520 C 220 430, 280 390, 330 370 C 380 390, 440 430, 440 520 Z"/>
+    <!-- Right Dome -->
+    <path d="M 760 520 C 760 430, 820 390, 870 370 C 920 390, 980 430, 980 520 Z"/>
+
+    <!-- Left Minaret -->
+    <rect x="150" y="320" width="40" height="200" rx="4"/>
+    <path d="M 150 320 L 170 280 L 190 320 Z"/>
+    <!-- Right Minaret -->
+    <rect x="1010" y="320" width="40" height="200" rx="4"/>
+    <path d="M 1010 320 L 1030 280 L 1050 320 Z"/>
+  </g>
+
+  <!-- Islamic Arch Framing -->
+  <path d="M 0 0 L 0 800 L 1200 800 L 1200 0 Z M 150 800 L 150 480 C 150 280, 400 180, 600 180 C 800 180, 1050 280, 1050 480 L 1050 800 Z" fill="#172c25" opacity="0.4"/>
+
+  <!-- Tents & Camping Environment in Foreground -->
+  <g stroke="#223b31" stroke-width="2">
+    <!-- Center Camp Fire & Learning Circle Base -->
+    <ellipse cx="600" cy="650" rx="450" ry="120" fill="url(#sageGrad)"/>
+
+    <!-- Left Camp Tent -->
+    <path d="M 180 660 L 290 510 L 400 660 Z" fill="#f5f0e8"/>
+    <path d="M 290 510 L 290 660 L 400 660 Z" fill="#e5ebe0"/>
+    <path d="M 260 660 L 290 580 L 320 660 Z" fill="#223b31"/>
+
+    <!-- Right Camp Tent -->
+    <path d="M 800 660 L 910 510 L 1020 660 Z" fill="#f5f0e8"/>
+    <path d="M 910 510 L 910 660 L 800 660 Z" fill="#f6dfcc"/>
+    <path d="M 880 660 L 910 580 L 940 660 Z" fill="#223b31"/>
+  </g>
+
+  <!-- Open Quran / Book Emblem at Center -->
+  <g transform="translate(600, 610)">
+    <!-- Book Stand (Rahl) -->
+    <path d="M -80 60 L 0 0 L 80 60 L 60 75 L 0 30 L -60 75 Z" fill="#8c583c"/>
+    <!-- Open Book Pages -->
+    <path d="M -90 10 C -40 -10, -10 5, 0 20 C 10 5, 40 -10, 90 10 L 85 45 C 40 25, 10 38, 0 50 C -10 38, -40 25, -85 45 Z" fill="#fbfaf6" stroke="#e7b58e" stroke-width="2"/>
+    <!-- Gold Trim / Lines -->
+    <path d="M -75 22 C -40 8, -15 20, -5 32" stroke="#e7b58e" stroke-width="2" fill="none"/>
+    <path d="M 75 22 C 40 8, 15 20, 5 32" stroke="#e7b58e" stroke-width="2" fill="none"/>
+    <!-- Quranic Calligraphy representation motif -->
+    <circle cx="0" cy="22" r="6" fill="#e7b58e"/>
+  </g>
+
+  <!-- Banner Text Badge Overlay -->
+  <g transform="translate(600, 730)">
+    <rect x="-220" y="-28" width="440" height="56" rx="28" fill="#172c25" stroke="#e7b58e" stroke-width="2"/>
+    <text x="0" y="8" font-family="Georgia, serif" font-size="22" fill="#f5f0e8" text-anchor="middle" font-weight="bold">
+      ISLAMIC VACATION COURSE 2026
+    </text>
+  </g>
+</svg>

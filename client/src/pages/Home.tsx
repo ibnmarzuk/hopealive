@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-const heroImage = "/hopealive-classroom.jpg";
+const heroImage = "/islamic-camp-environment.svg";
 
 const rhythmCards = [
   {
@@ -158,7 +158,7 @@ export default function Home() {
           </div>
           <div className="hero-visual">
             <div className="hero-image-wrap">
-              <img src={heroImage} alt="Young learners gathering around a table in a bright classroom" className="hero-image" />
+              <img src={heroImage} alt="Islamic Vacation Course 2026 camping retreat environment with domes, crescent moon and Quran learning emblem" className="hero-image" referrerPolicy="no-referrer" />
               <div className="hero-image-wash" />
             </div>
             <div className="hero-sticker hero-sticker--top">learn <span>with</span> heart</div>
