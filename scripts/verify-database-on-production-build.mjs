@@ -12,7 +12,7 @@ if (!connectionString) {
 const sql = postgres(connectionString, { prepare: false, max: 1, connect_timeout: 10 });
 try {
   await sql.begin(async tx => {
-    const classGroup = `health-${randomUUID()}`;
+    const classGroup = `health-${randomUUID().slice(0, 20)}`;
     await tx`insert into registration_counters ("classGroup", "lastNumber") values (${classGroup}, 0)`;
     const [initial] = await tx`select "lastNumber" from registration_counters where "classGroup" = ${classGroup} for update`;
     if (Number(initial?.lastNumber) !== 0) throw new Error("Database smoke test could not read the inserted counter.");
