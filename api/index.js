@@ -1790,7 +1790,17 @@ function createApp() {
   const app2 = express();
   app2.use(express.json({ limit: "50mb" }));
   app2.use(express.urlencoded({ limit: "50mb", extended: true }));
-  app2.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+  app2.get("/api/health", async (_req, res) => {
+    try {
+      const db = await getDb();
+      if (!db) return res.status(503).json({ status: "unavailable", database: "not_configured" });
+      await db.select({ id: users.id }).from(users).limit(1);
+      return res.json({ status: "ok", database: "connected" });
+    } catch (error) {
+      console.error("[Health] Database check failed:", error);
+      return res.status(503).json({ status: "unavailable", database: "error" });
+    }
+  });
   app2.get("/api/platform/config.js", (_req, res) => {
     res.set("Cache-Control", "no-store").type("application/javascript").send(publicPlatformScript());
   });
