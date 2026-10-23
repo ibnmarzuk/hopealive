@@ -1,7 +1,4 @@
 import { int, json, mediumtext, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
-// Type-only and relative on purpose: drizzle-kit loads this file without the
-// `@shared` alias, and a type import is erased before anything resolves it.
-import type { ReceiptAnalysis } from "../shared/registration";
 
 /**
  * Core user table backing auth flow.
@@ -64,19 +61,25 @@ export const registrations = mysqlTable("registrations", {
   /** Short, non-sensitive failure reason shown to admins so they can retry. */
   emailError: varchar("emailError", { length: 255 }),
   /**
-   * Receipt screenshot as a base64 data URL. Downscaled in the browser before
-   * upload and capped server-side, so MEDIUMTEXT (16 MB) is ample. Kept in the
-   * database rather than object storage so the only infrastructure this flow
-   * needs is MySQL, and so admins can always see what the model judged.
+   * Optional payment evidence: a receipt screenshot as a base64 data URL,
+   * downscaled in the browser and capped server-side (MEDIUMTEXT = 16 MB).
+   * Kept in the database so the only infrastructure this flow needs is MySQL
+   * and admins can always see the evidence when verifying manually.
    */
   receiptImage: mediumtext("receiptImage"),
   receiptSubmittedAt: timestamp("receiptSubmittedAt"),
-  /** Lifetime upload attempts; bounded so a bad actor cannot burn model calls. */
+  /** Lifetime upload attempts; bounded so a bad actor cannot fill the table. */
   receiptAttempts: int("receiptAttempts").notNull().default(0),
-  /** The model's extraction, checks and verdict for the latest receipt. */
-  receiptAnalysis: json("receiptAnalysis").$type<ReceiptAnalysis>(),
+  /**
+   * Retained, unused column (no migration to drop it). It previously held an
+   * automated analysis; verification is now fully manual, so nothing writes it.
+   */
+  receiptAnalysis: json("receiptAnalysis"),
   verifiedAt: timestamp("verifiedAt"),
-  /** Audit trail: did the automated check or a human grant verification? */
+  /**
+   * Who granted verification. The "ai" value is retained in the enum only to
+   * avoid a migration; the manual flow always writes "admin".
+   */
   verifiedBy: mysqlEnum("verifiedBy", ["ai", "admin"]),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

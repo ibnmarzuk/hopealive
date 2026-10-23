@@ -19,7 +19,6 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import DonationBar from "@/components/DonationBar";
 
 const heroImage = "/islamic-camp-environment.svg";
 
@@ -62,8 +61,8 @@ const registerSteps = [
   },
   {
     number: "03",
-    title: "Pay and upload your receipt",
-    copy: "Transfer the fee when you are ready, upload a screenshot of the receipt, and it is checked automatically. Verified participants get the group link.",
+    title: "Pay and keep your ID",
+    copy: "Transfer the fee using your registration ID as the reference. Our team confirms your payment, and confirmed participants get the group link.",
     icon: ShieldCheck,
   },
 ];
@@ -87,7 +86,7 @@ const faqs = [
   {
     question: "How is my payment confirmed, and how do I join the WhatsApp group?",
     answer:
-      "After transferring the fee, upload a screenshot of your bank receipt on the registration page. It is checked automatically within seconds; anything unclear is looked at by the team. Only confirmed participants receive the group link — on screen and by email — so please don’t share it on.",
+      "Transfer the fee using your registration ID as the reference. You can optionally upload a screenshot of your receipt to help us find it faster. Our team checks each payment and confirms it manually. Only confirmed participants receive the group link — on screen and by email — so please don’t share it on.",
   },
   {
     question: "Where and when is IVC 2026?",
@@ -135,8 +134,6 @@ export default function Home() {
 
   return (
     <div className="site-shell">
-      <DonationBar />
-
       <header className="site-header">
         <a href="#top" className="wordmark" aria-label="Hope-Alive home">
           <Mark />

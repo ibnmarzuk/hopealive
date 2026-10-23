@@ -26,6 +26,7 @@ import {
   registrationLookupSchema,
 } from "@shared/registration";
 import { trpc } from "@/lib/trpc";
+import { friendlyErrorMessage } from "@/lib/errors";
 import type { AppRouter } from "../../../server/routers";
 
 type Outputs = inferRouterOutputs<AppRouter>;
@@ -117,7 +118,7 @@ export default function Registration() {
   const [record, setRecord] = useState<RegistrationRecord | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Receipt upload
+  // Optional payment-evidence upload
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [receiptError, setReceiptError] = useState<string | null>(null);
@@ -130,7 +131,7 @@ export default function Registration() {
       setView("success");
       window.scrollTo({ top: 0, behavior: "smooth" });
     },
-    onError: error => toast.error(error.message),
+    onError: error => toast.error(friendlyErrorMessage(error)),
   });
 
   const submitReceipt = trpc.registration.submitReceipt.useMutation({
@@ -139,12 +140,14 @@ export default function Registration() {
       setReceiptPreview(null);
       setShowReupload(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      if (result.outcome === "verified") {
-        toast.success("Payment confirmed.");
-        window.scrollTo({ top: 0, behavior: "smooth" });
+      if (result.outcome === "already_verified") {
+        toast.success("Your payment is already confirmed.");
+      } else {
+        toast.success("Payment evidence submitted — pending review.");
       }
+      window.scrollTo({ top: 0, behavior: "smooth" });
     },
-    onError: error => setReceiptError(error.message),
+    onError: error => setReceiptError(friendlyErrorMessage(error)),
   });
 
   const selectedGroup = useMemo(() => findClassGroup(schoolClass), [schoolClass]);
@@ -187,7 +190,7 @@ export default function Registration() {
       setRecord(found);
       setView("payment");
     } catch (error) {
-      setLookupMessage(error instanceof Error ? error.message : "We could not find that registration.");
+      setLookupMessage(friendlyErrorMessage(error, "We could not find that registration."));
     } finally {
       setLookupPending(false);
     }
@@ -224,20 +227,22 @@ export default function Registration() {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
       await navigator.clipboard.writeText(record.registrationNumber);
       setCopied(true);
-      toast.success("Registration number copied.");
+      toast.success("Registration ID copied.");
       window.setTimeout(() => setCopied(false), 2500);
     } catch {
-      toast.error("Could not copy automatically. Please select the number and copy it manually.");
+      toast.error("Could not copy automatically. Please select the ID and copy it manually.");
     }
   };
 
   const fieldError = (name: string) => (showErrors ? formErrors[name] : undefined);
 
   const isVerified = record?.verificationStatus === "verified";
-  const isUnderReview = !isVerified && record?.receiptStatus === "submitted" && record?.verificationStatus === "clarification";
   const isRejected = !isVerified && record?.verificationStatus === "rejected";
-  const showUploader = Boolean(record) && !isVerified && (!isUnderReview || showReupload);
+  const isPendingReview = !isVerified && !isRejected && record?.receiptStatus === "submitted";
   const uploadsExhausted = (record?.receiptAttemptsLeft ?? 1) <= 0;
+  // Uploader is available until verified, unless the user has an untouched
+  // pending submission (then they confirm via the "upload a clearer one" link).
+  const showUploader = Boolean(record) && !isVerified && !uploadsExhausted && (!isPendingReview || showReupload);
 
   const introHeading =
     view === "resume" ? <>Continue your<br /><em>registration.</em></>
@@ -246,8 +251,8 @@ export default function Registration() {
     : <>Register a<br /><em>participant.</em></>;
 
   const introCopy =
-    view === "resume" ? "Use the number and phone number you received when you registered. We will bring your saved registration back."
-    : view === "payment" ? "Pay by bank transfer, upload a screenshot of the receipt, and we confirm it for you."
+    view === "resume" ? "Use the registration ID and phone number you received when you registered. We will bring your saved registration back."
+    : view === "payment" ? "Pay by bank transfer, then optionally upload your receipt. Our team confirms your payment using your registration ID."
     : "A short, clear registration for the Islamic Vacation Course camping programme in Ilorin.";
 
   return (
@@ -262,7 +267,7 @@ export default function Registration() {
           <span className="section-label"><span className="label-dot" /> IVC 2026 · 23rd–28th December</span>
           <h1>{introHeading}</h1>
           <p>{introCopy}</p>
-          <div className="registration-trust"><ShieldCheck size={17} /><span>Your place is saved before payment. Receipts are checked automatically, and the participants’ group link is shared only with verified registrations.</span></div>
+          <div className="registration-trust"><ShieldCheck size={17} /><span>Your place is saved before payment. Keep your registration ID safe — it is how we find and confirm your payment.</span></div>
         </div>
 
         <div className="registration-card">
@@ -277,7 +282,7 @@ export default function Registration() {
               <div className="form-heading">
                 <span>Step 1 of 3</span>
                 <h2>Tell us who is coming.</h2>
-                <p>Every participant gets their own registration number, including siblings.</p>
+                <p>Every participant gets their own registration ID, including siblings.</p>
               </div>
 
               <label>
@@ -304,7 +309,7 @@ export default function Registration() {
                   aria-invalid={Boolean(fieldError("guardianEmail"))}
                   aria-describedby="email-hint"
                 />
-                <small id="email-hint" className="field-hint"><Mail size={12} /> We send your registration number and camp details here.</small>
+                <small id="email-hint" className="field-hint"><Mail size={12} /> We send your registration ID and camp details here.</small>
                 {fieldError("guardianEmail") && <small className="field-error">{fieldError("guardianEmail")}</small>}
               </label>
 
@@ -343,7 +348,7 @@ export default function Registration() {
                   onChange={event => { setConsentToEmail(event.target.checked); revalidate({ consentToEmail: event.target.checked }); }}
                   aria-invalid={Boolean(fieldError("consentToEmail"))}
                 />
-                <span>Email me my registration number and the IVC 2026 camp details.</span>
+                <span>Email me my registration ID and the IVC 2026 camp details.</span>
               </label>
               {fieldError("consentToEmail") && <small className="field-error">{fieldError("consentToEmail")}</small>}
 
@@ -363,11 +368,11 @@ export default function Registration() {
               <div className="form-heading">
                 <span>Continue registration</span>
                 <h2>Bring it back.</h2>
-                <p>Enter the registration number and the same phone number used to register.</p>
+                <p>Enter your registration ID and the same phone number used to register.</p>
               </div>
 
               <label>
-                Registration number
+                Registration ID
                 <input
                   value={lookupNumber}
                   onChange={event => setLookupNumber(event.target.value.toUpperCase())}
@@ -402,24 +407,24 @@ export default function Registration() {
             <div className="registration-result">
               <span className="result-check"><Check size={27} /></span>
               <span className="section-label">Registration saved</span>
-              <h2>Keep this number<br /><em>safe.</em></h2>
-              <p>It is your key for payment and continuing later. We saved {record.studentName} under {record.classGroup}.</p>
+              <h2>Keep this ID<br /><em>safe.</em></h2>
+              <p>It is your key for payment and continuing later. We saved {record.studentName} under {record.classGroup}. You’ll need this ID when we confirm your payment.</p>
 
               <div className="registration-number-card">
-                <small>Your registration number</small>
+                <small>Your registration ID</small>
                 <strong>{record.registrationNumber}</strong>
-                <button onClick={copyNumber}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "Copied" : "Copy number"}</button>
+                <button onClick={copyNumber}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "Copied" : "Copy ID"}</button>
               </div>
 
               {record.emailStatus === "sent" ? (
                 <div className="email-status email-status--ok">
                   <Mail size={17} />
-                  <span>We’ve sent your registration number to <strong>{record.guardianEmail}</strong>. If it hasn’t arrived in a few minutes, check your spam folder.</span>
+                  <span>We’ve sent your registration ID to <strong>{record.guardianEmail}</strong>. If it hasn’t arrived in a few minutes, check your spam folder.</span>
                 </div>
               ) : (
                 <div className="email-status email-status--warn">
                   <AlertTriangle size={17} />
-                  <span>Your registration is saved, but we could not send the confirmation email right now. Please copy your number above — you can also reach us on WhatsApp {record.payment.enquiriesPhone}.</span>
+                  <span>Your registration is saved, but we could not send the confirmation email right now. Please copy your ID above — you can also reach us on WhatsApp {record.payment.enquiriesPhone}.</span>
                 </div>
               )}
 
@@ -440,13 +445,13 @@ export default function Registration() {
                   {record.whatsappGroupUrl ? (
                     <div className="group-card">
                       <span className="group-card__label"><MessageCircle size={15} /> Participants’ WhatsApp group</span>
-                      <p>This link is for verified participants only — please don’t forward it.</p>
+                      <p>This link is for confirmed participants only — please don’t forward it.</p>
                       <a className="button button--ink button--full" href={record.whatsappGroupUrl} target="_blank" rel="noreferrer">Join the group <ArrowUpRight size={18} /></a>
                     </div>
                   ) : (
                     <div className="email-status email-status--ok">
                       <Mail size={17} />
-                      <span>The participants’ group link will be shared with verified families by email shortly.</span>
+                      <span>The participants’ group link will be shared with confirmed families by email shortly.</span>
                     </div>
                   )}
 
@@ -455,14 +460,20 @@ export default function Registration() {
               ) : (
                 <>
                   <span className="section-label">Step 2 of 3 · {record.registrationNumber}</span>
-                  <h2>Pay, then upload<br /><em>your receipt.</em></h2>
-                  <p>Transfer the fee to the account below, then upload a screenshot of the receipt. We check it automatically and confirm {record.studentName}’s place.</p>
+                  <h2>Pay, then keep<br /><em>your ID.</em></h2>
+                  <p>Transfer the fee to the account below using your registration ID as the reference. Payments are confirmed by our team — you can optionally upload your receipt to help us find it faster.</p>
+
+                  <div className="registration-number-card">
+                    <small>Your registration ID (use as payment reference)</small>
+                    <strong>{record.registrationNumber}</strong>
+                    <button onClick={copyNumber}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "Copied" : "Copy ID"}</button>
+                  </div>
 
                   <div className="payment-card">
                     <div>
                       <small>Registration fee</small>
                       <strong>{record.feeNgn != null ? formatNaira(record.feeNgn) : "To be confirmed"}</strong>
-                      {record.feeNgn == null && <em>We’ll confirm the fee by email. You can still upload a receipt and the team will check the amount.</em>}
+                      {record.feeNgn == null && <em>We’ll confirm the fee by email. You can still pay and upload your receipt.</em>}
                     </div>
                     <div className="payment-account">
                       <small>Pay to</small>
@@ -472,13 +483,13 @@ export default function Registration() {
                     </div>
                   </div>
 
-                  {isUnderReview && !showReupload && (
+                  {isPendingReview && !showReupload && (
                     <div className="verdict-card verdict-card--review">
                       <Clock3 size={18} />
                       <div>
-                        <strong>Receipt received — under review</strong>
+                        <strong>Evidence received — pending review</strong>
                         <p>{record.receiptMessage}</p>
-                        {!uploadsExhausted && <button className="plain-action plain-action--inline" type="button" onClick={() => setShowReupload(true)}><RefreshCw size={13} /> Upload a clearer screenshot instead</button>}
+                        {!uploadsExhausted && <button className="plain-action plain-action--inline" type="button" onClick={() => setShowReupload(true)}><RefreshCw size={13} /> Upload a clearer receipt instead</button>}
                       </div>
                     </div>
                   )}
@@ -487,65 +498,64 @@ export default function Registration() {
                     <div className="verdict-card verdict-card--rejected">
                       <AlertTriangle size={18} />
                       <div>
-                        <strong>We couldn’t confirm that receipt</strong>
+                        <strong>We couldn’t confirm your payment</strong>
                         <p>{record.receiptMessage}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {uploadsExhausted && !isVerified && (
+                    <div className="verdict-card verdict-card--review">
+                      <HelpCircle size={18} />
+                      <div>
+                        <strong>Upload limit reached</strong>
+                        <p>Please message us on WhatsApp {record.payment.enquiriesPhone} with your registration ID and we’ll confirm your payment manually.</p>
                       </div>
                     </div>
                   )}
 
                   {showUploader && (
                     <div className="receipt-upload">
-                      {uploadsExhausted ? (
-                        <div className="verdict-card verdict-card--review">
-                          <HelpCircle size={18} />
-                          <div>
-                            <strong>Upload limit reached</strong>
-                            <p>Please message us on WhatsApp {record.payment.enquiriesPhone} with your registration number and we’ll confirm your payment manually.</p>
+                      <p className="receipt-upload__intro"><CreditCard size={15} /> Optional: upload your receipt. Submitting it does <strong>not</strong> confirm payment — our team reviews every payment.</p>
+                      <input
+                        ref={fileInputRef}
+                        id="receipt-file"
+                        className="receipt-upload__input"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleReceiptChosen}
+                        disabled={preparingImage || submitReceipt.isPending}
+                      />
+                      {receiptPreview ? (
+                        <div className="receipt-preview">
+                          <img src={receiptPreview} alt="Preview of your uploaded receipt" />
+                          <div className="receipt-preview__actions">
+                            <label htmlFor="receipt-file" className="plain-action plain-action--inline"><RefreshCw size={13} /> Choose a different image</label>
                           </div>
                         </div>
                       ) : (
-                        <>
-                          <input
-                            ref={fileInputRef}
-                            id="receipt-file"
-                            className="receipt-upload__input"
-                            type="file"
-                            accept="image/*"
-                            onChange={handleReceiptChosen}
-                            disabled={preparingImage || submitReceipt.isPending}
-                          />
-                          {receiptPreview ? (
-                            <div className="receipt-preview">
-                              <img src={receiptPreview} alt="Preview of your uploaded receipt" />
-                              <div className="receipt-preview__actions">
-                                <label htmlFor="receipt-file" className="plain-action plain-action--inline"><RefreshCw size={13} /> Choose a different image</label>
-                              </div>
-                            </div>
-                          ) : (
-                            <label htmlFor="receipt-file" className={`receipt-dropzone ${preparingImage ? "receipt-dropzone--busy" : ""}`}>
-                              <span className="receipt-dropzone__icon"><ImagePlus size={22} /></span>
-                              <strong>{preparingImage ? "Preparing image…" : "Upload your receipt screenshot"}</strong>
-                              <span>PNG or JPEG · the amount, recipient and status must be visible</span>
-                            </label>
-                          )}
-
-                          {receiptError && <p className="form-error"><HelpCircle size={16} /> {receiptError}</p>}
-
-                          <button
-                            className="button button--ink button--full"
-                            type="button"
-                            onClick={handleReceiptSubmit}
-                            disabled={!receiptPreview || submitReceipt.isPending || preparingImage}
-                          >
-                            {submitReceipt.isPending ? "Checking your receipt…" : "Check my receipt"} <ArrowUpRight size={18} />
-                          </button>
-                          <p className="payment-note payment-note--tight"><CreditCard size={16} /><span>{record.receiptAttemptsLeft} upload{record.receiptAttemptsLeft === 1 ? "" : "s"} left for this registration. Checks usually take a few seconds.</span></p>
-                        </>
+                        <label htmlFor="receipt-file" className={`receipt-dropzone ${preparingImage ? "receipt-dropzone--busy" : ""}`}>
+                          <span className="receipt-dropzone__icon"><ImagePlus size={22} /></span>
+                          <strong>{preparingImage ? "Preparing image…" : "Upload your receipt screenshot"}</strong>
+                          <span>PNG or JPEG · the amount, recipient and status should be visible</span>
+                        </label>
                       )}
+
+                      {receiptError && <p className="form-error"><HelpCircle size={16} /> {receiptError}</p>}
+
+                      <button
+                        className="button button--ink button--full"
+                        type="button"
+                        onClick={handleReceiptSubmit}
+                        disabled={!receiptPreview || submitReceipt.isPending || preparingImage}
+                      >
+                        {submitReceipt.isPending ? "Submitting…" : "Submit receipt for review"} <ArrowUpRight size={18} />
+                      </button>
+                      <p className="payment-note payment-note--tight"><Clock3 size={16} /><span>{record.receiptAttemptsLeft} upload{record.receiptAttemptsLeft === 1 ? "" : "s"} left for this registration.</span></p>
                     </div>
                   )}
 
-                  <button className="plain-action" onClick={() => setLocation("/")}>Continue later — I’ll keep my number</button>
+                  <button className="plain-action" onClick={() => setLocation("/")}>Continue later — I’ll keep my ID</button>
                 </>
               )}
             </div>

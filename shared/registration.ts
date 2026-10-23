@@ -135,8 +135,8 @@ export const EMAIL_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
 export type EmailStatus = (typeof EMAIL_STATUSES)[number];
 
 /**
- * Bank details every surface must agree on: the payment page, the emails and
- * the automated receipt check all read from here. Previously three copies.
+ * Bank details every surface must agree on: the payment page and the emails all
+ * read from here. Previously three copies.
  */
 export const PAYMENT_DETAILS = {
   accountName: "Hope-alive Muslim Found.",
@@ -146,42 +146,6 @@ export const PAYMENT_DETAILS = {
   enquiriesPhone: "08057782932",
   enquiriesLink: "https://wa.me/2348057782932",
 } as const;
-
-/** Outcome of the automated receipt check. */
-export const RECEIPT_VERDICTS = ["verified", "needs_review", "rejected"] as const;
-export type ReceiptVerdict = (typeof RECEIPT_VERDICTS)[number];
-
-/**
- * What the model extracted from the receipt and how it was judged. Stored on
- * the registration so an admin can see exactly why a receipt passed or not.
- */
-export type ReceiptAnalysis = {
-  verdict: ReceiptVerdict;
-  /** 0–1, the model's own confidence in the verdict. */
-  confidence: number;
-  extracted: {
-    amount: number | null;
-    currency: string | null;
-    recipientAccountNumber: string | null;
-    recipientName: string | null;
-    recipientBank: string | null;
-    senderName: string | null;
-    reference: string | null;
-    transactionDate: string | null;
-    transactionStatus: string | null;
-  };
-  checks: {
-    isBankTransferReceipt: boolean;
-    accountNumberMatches: boolean;
-    recipientNameMatches: boolean;
-    /** `null` when no fee is configured, so the amount could not be checked. */
-    amountSufficient: boolean | null;
-    transferSuccessful: boolean;
-  };
-  reasoning: string;
-  model: string;
-  analyzedAt: string;
-};
 
 /** Upper bound on the receipt data URL — roughly a 1.5 MB image after base64. */
 export const MAX_RECEIPT_DATA_URL_CHARS = 2_000_000;

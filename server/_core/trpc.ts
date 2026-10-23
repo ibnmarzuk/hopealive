@@ -31,15 +31,13 @@ export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
-    if (!ctx.user || ctx.user.role !== 'admin') {
+    // Admin access is granted by EITHER a Manus admin user OR a verified
+    // email/password admin session cookie (ctx.admin).
+    const isAdmin = ctx.user?.role === "admin" || Boolean(ctx.admin);
+    if (!isAdmin) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
 
-    return next({
-      ctx: {
-        ...ctx,
-        user: ctx.user,
-      },
-    });
+    return next({ ctx });
   }),
 );

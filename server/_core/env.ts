@@ -22,17 +22,19 @@ export const ENV = {
   /** Public base URL of this site, used to build links inside emails. */
   get appUrl() { return (process.env.APP_URL ?? "").replace(/\/+$/, ""); },
 
-  // --- Receipt verification (Claude) ------------------------------------
-  // Server-only. The SDK reads ANTHROPIC_API_KEY itself; this getter exists so
-  // the app can degrade gracefully (queue for manual review) when it is unset.
-  get anthropicApiKey() { return process.env.ANTHROPIC_API_KEY ?? ""; },
-  /** Model that reads receipts. Override only to pin a different Claude model. */
-  get receiptModel() { return process.env.RECEIPT_VERIFICATION_MODEL || "claude-opus-5"; },
-  /** Expected fee in naira. `null` when unset — the amount check is then skipped. */
+  // --- Payment / registration -------------------------------------------
+  /** Registration fee in naira, shown to users on the payment page. `null` if unset. */
   get registrationFeeNgn() {
     const value = Number(process.env.REGISTRATION_FEE_NGN ?? "");
     return Number.isFinite(value) && value > 0 ? value : null;
   },
   /** Group invite link. Returned to the browser only for verified registrations. */
   get whatsappGroupUrl() { return process.env.WHATSAPP_GROUP_URL ?? ""; },
+
+  // --- Admin login (email + password) -----------------------------------
+  // Server-only. Never exposed through publicConfig.ts. See server/_core/adminAuth.ts.
+  get adminEmail() { return process.env.ADMIN_EMAIL ?? ""; },
+  get adminPassword() { return process.env.ADMIN_PASSWORD ?? ""; },
+  /** Secret used to sign the admin session cookie. Use a long random string. */
+  get adminSessionSecret() { return process.env.ADMIN_SESSION_SECRET ?? ""; },
 };

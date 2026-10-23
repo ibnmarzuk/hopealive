@@ -12,8 +12,6 @@ import {
   registrationInputSchema,
   registrationLookupSchema,
   type ClassGroup,
-  type ReceiptAnalysis,
-  type ReceiptVerdict,
 } from "@shared/registration";
 import { TRPCError } from "@trpc/server";
 import { createHash } from "node:crypto";
@@ -29,7 +27,14 @@ import {
   sendRegistrationEmail,
 } from "./email/resend";
 import { clientIp, hitRateLimit } from "./rateLimit";
-import { analyzeReceipt, describeVerdictForUser, isReceiptCheckConfigured, receiptCheckProblem } from "./receipt/analyze";
+import {
+  ADMIN_COOKIE,
+  ADMIN_COOKIE_MAX_AGE_MS,
+  adminLoginProblem,
+  isAdminLoginConfigured,
+  signAdminSession,
+  verifyAdminCredentials,
+} from "./_core/adminAuth";
 import { ENV } from "./_core/env";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -48,8 +53,8 @@ const RATE_LIMITS = {
   ip: { limit: 30, windowMs: 10 * 60 * 1000 },
   /** Per email address. Accommodates a large family registering each child. */
   email: { limit: 10, windowMs: 60 * 60 * 1000 },
-  /** Receipt uploads per IP. Each one is a model call, so this is tighter. */
-  receiptIp: { limit: 12, windowMs: 60 * 60 * 1000 },
+  /** Receipt/evidence uploads per IP — each stores an image, so a little tighter. */
+  receiptIp: { limit: 20, windowMs: 60 * 60 * 1000 },
 };
 
 function requireDb() {
@@ -90,9 +95,8 @@ const NOT_FOUND_MESSAGE = "We could not find that registration. Check the number
 /**
  * The slice of a registration the browser is allowed to see.
  *
- * Deliberately not the raw row: the receipt image is large, the model's full
- * analysis is for admins, and the group invite link is only ever included for
- * a verified registration.
+ * Deliberately not the raw row: the receipt image is large and the group invite
+ * link is only ever included for a registration an admin has verified.
  */
 type PublicRegistrationSource = Pick<
   Registration,
@@ -106,12 +110,21 @@ type PublicRegistrationSource = Pick<
   | "verificationStatus"
   | "receiptStatus"
   | "receiptAttempts"
-  | "receiptAnalysis"
 >;
+
+function publicReceiptMessage(row: PublicRegistrationSource): string | null {
+  if (row.verificationStatus === "verified") return "Your payment has been confirmed.";
+  if (row.verificationStatus === "rejected") {
+    return "We could not confirm this payment. Please check your details, re-upload a clearer receipt, or contact us on WhatsApp with your registration ID.";
+  }
+  if (row.receiptStatus === "submitted") {
+    return "Your payment evidence has been received and is pending review. Submitting evidence does not confirm payment — an administrator will verify it using your registration ID.";
+  }
+  return null;
+}
 
 function toPublicRegistration(row: PublicRegistrationSource) {
   const verified = row.verificationStatus === "verified";
-  const analysis = row.receiptAnalysis ?? null;
   return {
     registrationNumber: row.registrationNumber,
     studentName: row.studentName,
@@ -123,35 +136,15 @@ function toPublicRegistration(row: PublicRegistrationSource) {
     verificationStatus: row.verificationStatus,
     receiptStatus: row.receiptStatus,
     receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - row.receiptAttempts),
-    receiptVerdict: (analysis?.verdict ?? null) as ReceiptVerdict | null,
-    receiptMessage: verified
-      ? "Your payment has been confirmed."
-      : analysis
-        ? describeVerdictForUser(analysis)
-        : row.receiptStatus === "submitted"
-          ? "We've received your receipt. A team member will confirm it shortly and you'll get an email once it's approved."
-          : null,
+    receiptMessage: publicReceiptMessage(row),
     feeNgn: ENV.registrationFeeNgn,
     payment: PAYMENT_DETAILS,
-    // Only verified registrations ever receive the invite link.
+    // Only a verified registration ever receives the invite link.
     whatsappGroupUrl: verified && ENV.whatsappGroupUrl ? ENV.whatsappGroupUrl : null,
   };
 }
 
 export type PublicRegistration = ReturnType<typeof toPublicRegistration>;
-
-/** Maps a receipt verdict onto the registration's status columns. */
-function statusForVerdict(verdict: ReceiptVerdict) {
-  switch (verdict) {
-    case "verified":
-      return { paymentStatus: "verified", verificationStatus: "verified" } as const;
-    case "rejected":
-      return { paymentStatus: "rejected", verificationStatus: "rejected" } as const;
-    case "needs_review":
-    default:
-      return { paymentStatus: "under_review", verificationStatus: "clarification" } as const;
-  }
-}
 
 /** Sends the group-link email. Never fatal; the on-screen link already covers a verified user. */
 async function notifyPaymentVerified(row: Pick<Registration, "guardianEmail" | "studentName" | "registrationNumber" | "classGroup">) {
@@ -172,6 +165,46 @@ export const appRouter = router({
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      return { success: true } as const;
+    }),
+
+    /** Whether the caller currently holds an admin session (either mechanism). */
+    adminSession: publicProcedure.query(({ ctx }) => ({
+      isAdmin: ctx.user?.role === "admin" || Boolean(ctx.admin),
+      email: ctx.admin?.email ?? ctx.user?.email ?? null,
+      loginConfigured: isAdminLoginConfigured(),
+    })),
+
+    /** Email + password admin login. Sets a signed, httpOnly session cookie. */
+    adminLogin: publicProcedure
+      .input(z.object({ email: z.string().trim().min(1), password: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const ip = clientIp(ctx.req);
+        const limit = hitRateLimit(`adminlogin:ip:${ip}`, 8, 10 * 60 * 1000);
+        if (!limit.allowed) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: `Too many login attempts. Please try again in about ${Math.ceil(limit.retryAfterSeconds / 60)} minute(s).`,
+          });
+        }
+
+        const problem = adminLoginProblem();
+        if (problem) {
+          console.warn(`[Admin] Login unavailable: ${problem}.`);
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Admin login is not configured on the server yet." });
+        }
+
+        if (!verifyAdminCredentials(input.email, input.password)) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Incorrect email or password." });
+        }
+
+        const token = await signAdminSession(input.email.trim().toLowerCase());
+        ctx.res.cookie(ADMIN_COOKIE, token, { ...getSessionCookieOptions(ctx.req), maxAge: ADMIN_COOKIE_MAX_AGE_MS });
+        return { success: true } as const;
+      }),
+
+    adminLogout: publicProcedure.mutation(({ ctx }) => {
+      ctx.res.clearCookie(ADMIN_COOKIE, { ...getSessionCookieOptions(ctx.req), maxAge: -1 });
       return { success: true } as const;
     }),
   }),
@@ -286,7 +319,6 @@ export const appRouter = router({
           verificationStatus: "pending",
           receiptStatus: "not_submitted",
           receiptAttempts: 0,
-          receiptAnalysis: null,
         }),
         // "sent" means Resend accepted the message, not that it reached the inbox.
         emailStatus: emailResult.status,
@@ -309,11 +341,9 @@ export const appRouter = router({
     }),
 
     /**
-     * Receipt upload + automated check.
-     *
-     * Order matters: the image is persisted and the attempt counted *before*
-     * the model is called, so a crash or timeout mid-analysis never loses an
-     * upload — the worst case is a receipt waiting for manual review.
+     * Optional payment-evidence upload. Stores the screenshot and marks the
+     * registration as awaiting manual review. Uploading evidence never confirms
+     * a payment — only an admin does that (see `adminUpdateStatus`).
      */
     submitReceipt: publicProcedure.input(receiptUploadSchema).mutation(async ({ input, ctx }) => {
       const ip = clientIp(ctx.req);
@@ -321,7 +351,7 @@ export const appRouter = router({
       if (!ipLimit.allowed) {
         throw new TRPCError({
           code: "TOO_MANY_REQUESTS",
-          message: `Too many receipt uploads. Please try again in about ${Math.ceil(ipLimit.retryAfterSeconds / 60)} minute(s).`,
+          message: `Too many uploads. Please try again in about ${Math.ceil(ipLimit.retryAfterSeconds / 60)} minute(s).`,
         });
       }
 
@@ -336,81 +366,40 @@ export const appRouter = router({
       const registration = found[0];
       if (!registration) throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
 
-      // Already verified: nothing to do, and never spend a model call on it.
+      // Already confirmed: nothing to do.
       if (registration.verificationStatus === "verified") {
-        return { outcome: "verified" as const, ...toPublicRegistration(registration) };
+        return { outcome: "already_verified" as const, ...toPublicRegistration(registration) };
       }
 
       if (registration.receiptAttempts >= MAX_RECEIPT_ATTEMPTS) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: `You've reached the upload limit for this registration. Please message us on WhatsApp ${PAYMENT_DETAILS.enquiriesPhone} and we'll confirm it manually.`,
+          message: `You've reached the upload limit for this registration. Please message us on WhatsApp ${PAYMENT_DETAILS.enquiriesPhone} with your registration ID and we'll confirm it manually.`,
         });
       }
 
       const attempts = registration.receiptAttempts + 1;
-      const submittedAt = new Date();
       await db
         .update(registrations)
         .set({
           receiptImage: input.imageDataUrl,
-          receiptSubmittedAt: submittedAt,
+          receiptSubmittedAt: new Date(),
           receiptAttempts: attempts,
           receiptStatus: "submitted",
+          // Awaiting a human: "claimed" by the registrant, pending verification.
           paymentStatus: "payment_claimed",
           verificationStatus: "pending",
-          receiptAnalysis: null,
         })
         .where(eq(registrations.id, registration.id));
-
-      const check = await analyzeReceipt(
-        input.imageDataUrl,
-        {
-          accountNumber: PAYMENT_DETAILS.accountNumber,
-          accountName: PAYMENT_DETAILS.accountName,
-          bank: PAYMENT_DETAILS.bank,
-          feeNgn: ENV.registrationFeeNgn,
-        },
-        { registrationNumber },
-      );
-
-      let analysis: ReceiptAnalysis | null = null;
-      let outcome: ReceiptVerdict | "pending_manual";
-      let statuses: ReturnType<typeof statusForVerdict>;
-      let note: string | null = null;
-
-      if (check.status === "analyzed") {
-        analysis = check.analysis;
-        outcome = analysis.verdict;
-        statuses = statusForVerdict(analysis.verdict);
-      } else {
-        // Model unavailable or failed: keep the upload, route to a human.
-        outcome = "pending_manual";
-        statuses = statusForVerdict("needs_review");
-        note = `Automated receipt check ${check.status}: ${check.reason}`;
-      }
-
-      const verifiedNow = outcome === "verified";
-      await db
-        .update(registrations)
-        .set({
-          ...statuses,
-          receiptAnalysis: analysis,
-          ...(verifiedNow ? { verifiedAt: new Date(), verifiedBy: "ai" as const } : {}),
-          ...(note ? { notes: [registration.notes, `${submittedAt.toISOString()} — ${note}`].filter(Boolean).join("\n") } : {}),
-        })
-        .where(eq(registrations.id, registration.id));
-
-      if (verifiedNow) await notifyPaymentVerified(registration);
 
       return {
-        outcome,
+        outcome: "submitted" as const,
         ...toPublicRegistration({
           ...registration,
-          ...statuses,
+          paymentStatus: "payment_claimed",
+          verificationStatus: "pending",
           receiptStatus: "submitted",
           receiptAttempts: attempts,
-          receiptAnalysis: analysis,
         }),
       };
     }),
@@ -434,7 +423,6 @@ export const appRouter = router({
           emailError: registrations.emailError,
           receiptSubmittedAt: registrations.receiptSubmittedAt,
           receiptAttempts: registrations.receiptAttempts,
-          receiptAnalysis: registrations.receiptAnalysis,
           verifiedAt: registrations.verifiedAt,
           verifiedBy: registrations.verifiedBy,
           notes: registrations.notes,
@@ -446,14 +434,12 @@ export const appRouter = router({
         rows,
         emailConfigured: isEmailConfigured(),
         emailProblem: emailConfigurationProblem(),
-        receiptCheckConfigured: isReceiptCheckConfigured(),
-        receiptCheckProblem: receiptCheckProblem(),
         feeNgn: ENV.registrationFeeNgn,
         groupLinkConfigured: Boolean(ENV.whatsappGroupUrl),
       };
     }),
 
-    /** The stored receipt screenshot for one registration. */
+    /** The stored receipt screenshot for one registration, fetched on demand. */
     adminReceiptImage: adminProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => {
       const db = await requireDb();
       const result = await db
@@ -466,8 +452,9 @@ export const appRouter = router({
     }),
 
     /**
-     * Manual status override. Moving a registration to verified for the first
-     * time also sends the group-link email, exactly as the automated path does.
+     * Manual status change — the only way a payment is confirmed. Moving a
+     * registration to verified for the first time also sends the group-link
+     * email. The "first time" guard prevents duplicate confirmation emails.
      */
     adminUpdateStatus: adminProcedure
       .input(z.object({ id: z.number().int().positive(), paymentStatus: z.enum(PAYMENT_STATUSES) }))
