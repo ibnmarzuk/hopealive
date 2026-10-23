@@ -37,6 +37,32 @@ export function findClassGroup(schoolClass: string): ClassGroup | null {
   return null;
 }
 
+/** Registration prices shown in the Hope-Alive IVC 2026 fee schedule. */
+export function registrationFeeNgn(schoolClass: string, registeredAt: Date = new Date()): number | null {
+  const group = findClassGroup(schoolClass);
+  if (!group || Number.isNaN(registeredAt.getTime())) return null;
+
+  // Use Lagos calendar dates so the advertised 23 December changeover does not
+  // depend on the server's UTC offset or the visitor's device timezone.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Lagos",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(registeredAt);
+  const date = parts.reduce<Record<string, string>>((result, part) => {
+    if (part.type !== "literal") result[part.type] = part.value;
+    return result;
+  }, {});
+  const localDate = `${date.year}-${date.month}-${date.day}`;
+  if (localDate < "2026-09-20") return null;
+  const isOnSite = localDate >= "2026-12-23";
+  const primaryOrBelow = group === "Lower Class" || group === "Middle Class";
+
+  if (isOnSite) return primaryOrBelow ? 8_000 : 9_000;
+  return primaryOrBelow ? 7_500 : 8_500;
+}
+
 /**
  * Reduces a phone number to digits and a leading `+`.
  * Used for both storage and lookup so "0805 778 2932" and "08057782932" match.
@@ -139,7 +165,7 @@ export type EmailStatus = (typeof EMAIL_STATUSES)[number];
  * read from here. Previously three copies.
  */
 export const PAYMENT_DETAILS = {
-  accountName: "Hope-alive Muslim Found.",
+  accountName: "Hope-Alive Muslim Foundation",
   accountNumber: "0019871510",
   bank: "Jaiz Bank",
   /** Enquiries only. Receipts are uploaded on the site, never sent here. */

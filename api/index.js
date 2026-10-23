@@ -139,11 +139,6 @@ var ENV = {
     return (process.env.APP_URL ?? "").replace(/\/+$/, "");
   },
   // --- Payment / registration -------------------------------------------
-  /** Registration fee in naira, shown to users on the payment page. `null` if unset. */
-  get registrationFeeNgn() {
-    const value = Number(process.env.REGISTRATION_FEE_NGN ?? "");
-    return Number.isFinite(value) && value > 0 ? value : null;
-  },
   /** Group invite link. Returned to the browser only for verified registrations. */
   get whatsappGroupUrl() {
     return process.env.WHATSAPP_GROUP_URL ?? "";
@@ -587,6 +582,26 @@ function findClassGroup(schoolClass) {
   }
   return null;
 }
+function registrationFeeNgn(schoolClass, registeredAt = /* @__PURE__ */ new Date()) {
+  const group = findClassGroup(schoolClass);
+  if (!group || Number.isNaN(registeredAt.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Lagos",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(registeredAt);
+  const date = parts.reduce((result, part) => {
+    if (part.type !== "literal") result[part.type] = part.value;
+    return result;
+  }, {});
+  const localDate = `${date.year}-${date.month}-${date.day}`;
+  if (localDate < "2026-09-20") return null;
+  const isOnSite = localDate >= "2026-12-23";
+  const primaryOrBelow = group === "Lower Class" || group === "Middle Class";
+  if (isOnSite) return primaryOrBelow ? 8e3 : 9e3;
+  return primaryOrBelow ? 7500 : 8500;
+}
 function normalizePhone(phone) {
   const cleaned = phone.replace(/[^\d+]/g, "");
   return cleaned.startsWith("+") ? `+${cleaned.slice(1).replace(/\+/g, "")}` : cleaned.replace(/\+/g, "");
@@ -621,7 +636,7 @@ var PAYMENT_STATUSES = [
   "completed"
 ];
 var PAYMENT_DETAILS = {
-  accountName: "Hope-alive Muslim Found.",
+  accountName: "Hope-Alive Muslim Foundation",
   accountNumber: "0019871510",
   bank: "Jaiz Bank",
   /** Enquiries only. Receipts are uploaded on the site, never sent here. */
@@ -887,11 +902,14 @@ var CAMP = {
   whatsappDisplay: PAYMENT_DETAILS.enquiriesPhone,
   whatsappLink: PAYMENT_DETAILS.enquiriesLink
 };
+function formatNaira(amount) {
+  return typeof amount === "number" ? `\u20A6${amount.toLocaleString("en-NG")}` : "Contact Hope-Alive to confirm the fee";
+}
 function escapeHtml(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function registrationEmailSubject(data) {
-  return `Registration confirmed \u2014 ${data.registrationNumber} \xB7 Hope-Alive IVC 2026`;
+  return `Registration saved \u2014 ${data.registrationNumber} \xB7 Hope-Alive IVC 2026`;
 }
 function detailRow(label, value, isLast = false) {
   const border = isLast ? "" : `border-bottom:1px solid ${LINE};`;
@@ -948,6 +966,7 @@ function registrationEmailHtml(data) {
       ${detailRow("Participant", data.studentName)}
       ${detailRow("Class", data.schoolClass)}
       ${detailRow("Class group", String(data.classGroup))}
+      ${detailRow("Registration fee", formatNaira(data.feeNgn))}
       ${detailRow("Contact phone", data.guardianPhone)}
       ${detailRow("Dates", CAMP.dates)}
       ${detailRow("Venue", CAMP.venue, true)}
@@ -964,7 +983,7 @@ function registrationEmailHtml(data) {
         <p style="margin:0;font-family:Helvetica,Arial,sans-serif;font-size:13px;color:${INK_SOFT};">${escapeHtml(CAMP.bank)}</p>
       </td></tr>
     </table>
-    <p style="margin:12px 0 0;font-family:Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:${INK_SOFT};">Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. It is checked automatically, and once confirmed you'll receive the participants' group link.</p>
+    <p style="margin:12px 0 0;font-family:Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:${INK_SOFT};">Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. Our team reviews payments manually; once yours is confirmed, you\u2019ll receive the participants\u2019 group link.</p>
   </td></tr>
 
   ${continueButton ? `<tr><td align="center" style="padding:26px 32px 0;">${continueButton}</td></tr>` : ""}
@@ -995,6 +1014,7 @@ function registrationEmailText(data) {
     `Participant:   ${data.studentName}`,
     `Class:         ${data.schoolClass}`,
     `Class group:   ${data.classGroup}`,
+    `Registration fee: ${formatNaira(data.feeNgn)}`,
     `Contact phone: ${data.guardianPhone}`,
     `Dates:         ${CAMP.dates}`,
     `Venue:         ${CAMP.venue}`,
@@ -1005,7 +1025,7 @@ function registrationEmailText(data) {
     `${CAMP.accountNumber}`,
     `${CAMP.bank}`,
     "",
-    "Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. It is checked automatically, and once confirmed you'll receive the participants' group link."
+    "Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. Our team reviews payments manually; once yours is confirmed, you'll receive the participants' group link."
   ];
   if (data.appUrl) {
     lines.push("", `Upload your receipt / continue: ${data.appUrl}/register?mode=continue`);
@@ -1070,6 +1090,7 @@ function paymentVerifiedEmailHtml(data) {
 
   <tr><td style="padding:24px 32px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${detailRow("Registration fee", formatNaira(data.feeNgn))}
       ${detailRow("Dates", CAMP.dates)}
       ${detailRow("Venue", CAMP.venue, true)}
     </table>
@@ -1095,6 +1116,7 @@ function paymentVerifiedEmailText(data) {
     "Payment confirmed.",
     "",
     `Thank you \u2014 ${data.studentName}'s place at the Hope-Alive IVC 2026 camping programme is secured under ${data.registrationNumber} (${data.classGroup}).`,
+    `Registration fee: ${formatNaira(data.feeNgn)}`,
     ""
   ];
   if (data.groupUrl) {
@@ -1491,7 +1513,7 @@ function toPublicRegistration(row) {
     receiptStatus: row.receiptStatus,
     receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - row.receiptAttempts),
     receiptMessage: publicReceiptMessage(row),
-    feeNgn: ENV.registrationFeeNgn,
+    feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt),
     payment: PAYMENT_DETAILS,
     // Only a verified registration ever receives the invite link.
     whatsappGroupUrl: verified && ENV.whatsappGroupUrl ? ENV.whatsappGroupUrl : null
@@ -1503,6 +1525,7 @@ async function notifyPaymentVerified(row) {
     studentName: row.studentName,
     registrationNumber: row.registrationNumber,
     classGroup: row.classGroup,
+    feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt),
     groupUrl: ENV.whatsappGroupUrl,
     appUrl: ENV.appUrl
   });
@@ -1596,12 +1619,16 @@ var appRouter = router({
           message: "We could not save your registration. Please try again."
         });
       }
+      const savedRegistration = await store.findByNumber(registrationNumber);
+      const registeredAt = savedRegistration?.createdAt ?? /* @__PURE__ */ new Date();
+      const feeNgn = registrationFeeNgn(input.schoolClass, registeredAt);
       const emailResult = await sendRegistrationEmail(guardianEmail, {
         studentName,
         registrationNumber,
         schoolClass: input.schoolClass,
         classGroup,
         guardianPhone,
+        feeNgn,
         appUrl: ENV.appUrl
       });
       try {
@@ -1623,7 +1650,8 @@ var appRouter = router({
           paymentStatus: "pending_payment",
           verificationStatus: "pending",
           receiptStatus: "not_submitted",
-          receiptAttempts: 0
+          receiptAttempts: 0,
+          createdAt: registeredAt
         }),
         // "sent" means Resend accepted the message, not that it reached the inbox.
         emailStatus: emailResult.status
@@ -1691,10 +1719,9 @@ var appRouter = router({
       const store = await getStore();
       const rows = await store.listForAdmin();
       return {
-        rows,
+        rows: rows.map((row) => ({ ...row, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) })),
         emailConfigured: isEmailConfigured(),
         emailProblem: emailConfigurationProblem(),
-        feeNgn: ENV.registrationFeeNgn,
         groupLinkConfigured: Boolean(ENV.whatsappGroupUrl)
       };
     }),
@@ -1742,6 +1769,7 @@ var appRouter = router({
           schoolClass: registration.schoolClass,
           classGroup: registration.classGroup,
           guardianPhone: registration.guardianPhone,
+          feeNgn: registrationFeeNgn(registration.schoolClass, registration.createdAt),
           appUrl: ENV.appUrl
         },
         // Time-bucketed so an accidental double-click is deduped, but a

@@ -15,6 +15,7 @@ export type RegistrationEmailData = {
   classGroup: ClassGroup | string;
   guardianPhone: string;
   appUrl: string;
+  feeNgn?: number | null;
 };
 
 const INK = "#172c25";
@@ -36,6 +37,10 @@ const CAMP = {
   whatsappLink: PAYMENT_DETAILS.enquiriesLink,
 };
 
+function formatNaira(amount: number | null | undefined): string {
+  return typeof amount === "number" ? `₦${amount.toLocaleString("en-NG")}` : "Contact Hope-Alive to confirm the fee";
+}
+
 /** Escapes text interpolated into the HTML body. */
 function escapeHtml(value: string): string {
   return value
@@ -47,7 +52,7 @@ function escapeHtml(value: string): string {
 }
 
 export function registrationEmailSubject(data: RegistrationEmailData): string {
-  return `Registration confirmed — ${data.registrationNumber} · Hope-Alive IVC 2026`;
+  return `Registration saved — ${data.registrationNumber} · Hope-Alive IVC 2026`;
 }
 
 function detailRow(label: string, value: string, isLast = false): string {
@@ -110,6 +115,7 @@ export function registrationEmailHtml(data: RegistrationEmailData): string {
       ${detailRow("Participant", data.studentName)}
       ${detailRow("Class", data.schoolClass)}
       ${detailRow("Class group", String(data.classGroup))}
+      ${detailRow("Registration fee", formatNaira(data.feeNgn))}
       ${detailRow("Contact phone", data.guardianPhone)}
       ${detailRow("Dates", CAMP.dates)}
       ${detailRow("Venue", CAMP.venue, true)}
@@ -126,7 +132,7 @@ export function registrationEmailHtml(data: RegistrationEmailData): string {
         <p style="margin:0;font-family:Helvetica,Arial,sans-serif;font-size:13px;color:${INK_SOFT};">${escapeHtml(CAMP.bank)}</p>
       </td></tr>
     </table>
-    <p style="margin:12px 0 0;font-family:Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:${INK_SOFT};">Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. It is checked automatically, and once confirmed you'll receive the participants' group link.</p>
+    <p style="margin:12px 0 0;font-family:Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:${INK_SOFT};">Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. Our team reviews payments manually; once yours is confirmed, you’ll receive the participants’ group link.</p>
   </td></tr>
 
   ${continueButton ? `<tr><td align="center" style="padding:26px 32px 0;">${continueButton}</td></tr>` : ""}
@@ -159,6 +165,7 @@ export function registrationEmailText(data: RegistrationEmailData): string {
     `Participant:   ${data.studentName}`,
     `Class:         ${data.schoolClass}`,
     `Class group:   ${data.classGroup}`,
+    `Registration fee: ${formatNaira(data.feeNgn)}`,
     `Contact phone: ${data.guardianPhone}`,
     `Dates:         ${CAMP.dates}`,
     `Venue:         ${CAMP.venue}`,
@@ -169,7 +176,7 @@ export function registrationEmailText(data: RegistrationEmailData): string {
     `${CAMP.accountNumber}`,
     `${CAMP.bank}`,
     "",
-    "Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. It is checked automatically, and once confirmed you'll receive the participants' group link.",
+    "Pay by transfer using the details above, then come back to the site and upload a screenshot of your receipt. Our team reviews payments manually; once yours is confirmed, you'll receive the participants' group link.",
   ];
 
   if (data.appUrl) {
@@ -195,6 +202,7 @@ export type PaymentVerifiedEmailData = {
   studentName: string;
   registrationNumber: string;
   classGroup: ClassGroup | string;
+  feeNgn?: number | null;
   /** Group invite link. Omitted from the email when not configured. */
   groupUrl: string;
   appUrl: string;
@@ -256,6 +264,7 @@ export function paymentVerifiedEmailHtml(data: PaymentVerifiedEmailData): string
 
   <tr><td style="padding:24px 32px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${detailRow("Registration fee", formatNaira(data.feeNgn))}
       ${detailRow("Dates", CAMP.dates)}
       ${detailRow("Venue", CAMP.venue, true)}
     </table>
@@ -282,6 +291,7 @@ export function paymentVerifiedEmailText(data: PaymentVerifiedEmailData): string
     "Payment confirmed.",
     "",
     `Thank you — ${data.studentName}'s place at the Hope-Alive IVC 2026 camping programme is secured under ${data.registrationNumber} (${data.classGroup}).`,
+    `Registration fee: ${formatNaira(data.feeNgn)}`,
     "",
   ];
 

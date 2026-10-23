@@ -11,6 +11,7 @@ import {
   receiptUploadSchema,
   registrationInputSchema,
   registrationLookupSchema,
+  registrationFeeNgn,
   type ClassGroup,
 } from "@shared/registration";
 import { TRPCError } from "@trpc/server";
@@ -89,6 +90,7 @@ type PublicRegistrationSource = Pick<
   | "verificationStatus"
   | "receiptStatus"
   | "receiptAttempts"
+  | "createdAt"
 >;
 
 function publicReceiptMessage(row: PublicRegistrationSource): string | null {
@@ -116,7 +118,7 @@ function toPublicRegistration(row: PublicRegistrationSource) {
     receiptStatus: row.receiptStatus,
     receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - row.receiptAttempts),
     receiptMessage: publicReceiptMessage(row),
-    feeNgn: ENV.registrationFeeNgn,
+    feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt),
     payment: PAYMENT_DETAILS,
     // Only a verified registration ever receives the invite link.
     whatsappGroupUrl: verified && ENV.whatsappGroupUrl ? ENV.whatsappGroupUrl : null,
@@ -126,12 +128,13 @@ function toPublicRegistration(row: PublicRegistrationSource) {
 export type PublicRegistration = ReturnType<typeof toPublicRegistration>;
 
 /** Sends the group-link email. Never fatal; the on-screen link already covers a verified user. */
-async function notifyPaymentVerified(row: Pick<Registration, "guardianEmail" | "studentName" | "registrationNumber" | "classGroup">) {
+async function notifyPaymentVerified(row: Pick<Registration, "guardianEmail" | "studentName" | "registrationNumber" | "classGroup" | "schoolClass" | "createdAt">) {
   if (!row.guardianEmail) return;
   await sendPaymentVerifiedEmail(row.guardianEmail, {
     studentName: row.studentName,
     registrationNumber: row.registrationNumber,
     classGroup: row.classGroup,
+    feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt),
     groupUrl: ENV.whatsappGroupUrl,
     appUrl: ENV.appUrl,
   });
@@ -245,12 +248,16 @@ export const appRouter = router({
 
       // The registration is committed from here on. Email problems are
       // reported, never fatal — we must not lose a saved registration.
+      const savedRegistration = await store.findByNumber(registrationNumber);
+      const registeredAt = savedRegistration?.createdAt ?? new Date();
+      const feeNgn = registrationFeeNgn(input.schoolClass, registeredAt);
       const emailResult = await sendRegistrationEmail(guardianEmail, {
         studentName,
         registrationNumber,
         schoolClass: input.schoolClass,
         classGroup,
         guardianPhone,
+        feeNgn,
         appUrl: ENV.appUrl,
       });
 
@@ -278,6 +285,7 @@ export const appRouter = router({
           verificationStatus: "pending",
           receiptStatus: "not_submitted",
           receiptAttempts: 0,
+          createdAt: registeredAt,
         }),
         // "sent" means Resend accepted the message, not that it reached the inbox.
         emailStatus: emailResult.status,
@@ -354,10 +362,9 @@ export const appRouter = router({
       const store = await getStore();
       const rows = await store.listForAdmin();
       return {
-        rows,
+        rows: rows.map(row => ({ ...row, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) })),
         emailConfigured: isEmailConfigured(),
         emailProblem: emailConfigurationProblem(),
-        feeNgn: ENV.registrationFeeNgn,
         groupLinkConfigured: Boolean(ENV.whatsappGroupUrl),
       };
     }),
@@ -425,6 +432,7 @@ export const appRouter = router({
             schoolClass: registration.schoolClass,
             classGroup: registration.classGroup,
             guardianPhone: registration.guardianPhone,
+            feeNgn: registrationFeeNgn(registration.schoolClass, registration.createdAt),
             appUrl: ENV.appUrl,
           },
           // Time-bucketed so an accidental double-click is deduped, but a

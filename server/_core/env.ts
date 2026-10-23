@@ -23,11 +23,6 @@ export const ENV = {
   get appUrl() { return (process.env.APP_URL ?? "").replace(/\/+$/, ""); },
 
   // --- Payment / registration -------------------------------------------
-  /** Registration fee in naira, shown to users on the payment page. `null` if unset. */
-  get registrationFeeNgn() {
-    const value = Number(process.env.REGISTRATION_FEE_NGN ?? "");
-    return Number.isFinite(value) && value > 0 ? value : null;
-  },
   /** Group invite link. Returned to the browser only for verified registrations. */
   get whatsappGroupUrl() { return process.env.WHATSAPP_GROUP_URL ?? ""; },
 

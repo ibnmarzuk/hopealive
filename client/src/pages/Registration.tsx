@@ -22,6 +22,7 @@ import {
   MAX_RECEIPT_DATA_URL_CHARS,
   SCHOOL_CLASSES,
   findClassGroup,
+  registrationFeeNgn,
   registrationInputSchema,
   registrationLookupSchema,
 } from "@shared/registration";
@@ -49,6 +50,10 @@ function collectErrors(issues: { path: PropertyKey[]; message: string }[]): Fiel
 /** Formats naira without the "NGN" prefix the Intl default adds. */
 function formatNaira(amount: number): string {
   return `₦${amount.toLocaleString("en-NG")}`;
+}
+
+function currentFeeLabel(amount: number | null): string {
+  return amount == null ? "Select a class to see the fee" : `Registration fee: ${formatNaira(amount)}`;
 }
 
 /**
@@ -340,6 +345,7 @@ export default function Registration() {
               </label>
 
               {selectedGroup && <div className="class-group-note"><Check size={17} /><span>Your participant will be registered under: <strong>{selectedGroup}</strong></span></div>}
+              {schoolClass && <div className="class-group-note"><CreditCard size={17} /><span>{currentFeeLabel(registrationFeeNgn(schoolClass))}. The fee is fixed when you register.</span></div>}
 
               <label className="form-check">
                 <input

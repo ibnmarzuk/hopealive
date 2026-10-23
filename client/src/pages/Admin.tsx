@@ -270,6 +270,7 @@ export default function Admin() {
                     </td>
                     <td>
                       <span className={`receipt-pill receipt-pill--${payment.tone}`}>{payment.label}</span>
+                      {item.feeNgn != null && <small>Expected: ₦{item.feeNgn.toLocaleString("en-NG")}</small>}
                       <button className="plain-action plain-action--inline" type="button" onClick={() => setOpenId(item.id)}>
                         View details{item.receiptStatus === "submitted" ? " & evidence" : ""}
                       </button>
