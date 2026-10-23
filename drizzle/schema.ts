@@ -1,4 +1,7 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { int, json, mediumtext, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+// Type-only and relative on purpose: drizzle-kit loads this file without the
+// `@shared` alias, and a type import is erased before anything resolves it.
+import type { ReceiptAnalysis } from "../shared/registration";
 
 /**
  * Core user table backing auth flow.
@@ -34,13 +37,47 @@ export const registrationCounters = mysqlTable("registration_counters", {
 export const registrations = mysqlTable("registrations", {
   id: int("id").autoincrement().primaryKey(),
   studentName: varchar("studentName", { length: 160 }).notNull(),
+  /**
+   * Registration confirmations are sent here. Nullable at the column level so
+   * registrations captured before the email field existed remain valid; the
+   * API requires it for every new registration.
+   */
+  guardianEmail: varchar("guardianEmail", { length: 320 }),
   guardianPhone: varchar("guardianPhone", { length: 32 }).notNull(),
   schoolClass: varchar("schoolClass", { length: 64 }).notNull(),
   classGroup: varchar("classGroup", { length: 32 }).notNull(),
   registrationNumber: varchar("registrationNumber", { length: 32 }).notNull().unique(),
+  /**
+   * SHA-256 of the normalised (name | phone | class) tuple. The unique index
+   * makes duplicate prevention race-proof: two concurrent submissions for the
+   * same participant cannot both succeed.
+   */
+  dedupeKey: varchar("dedupeKey", { length: 64 }).unique(),
   paymentStatus: mysqlEnum("paymentStatus", ["pending_payment", "payment_claimed", "under_review", "verified", "rejected", "completed"]).notNull().default("pending_payment"),
   receiptStatus: mysqlEnum("receiptStatus", ["not_submitted", "submitted"]).notNull().default("not_submitted"),
   verificationStatus: mysqlEnum("verificationStatus", ["pending", "verified", "rejected", "clarification"]).notNull().default("pending"),
+  /** Delivery state of the confirmation email. Never blocks a saved registration. */
+  emailStatus: mysqlEnum("emailStatus", ["pending", "sent", "failed", "skipped"]).notNull().default("pending"),
+  /** Resend message id, for tracing a delivery in the Resend dashboard. */
+  emailMessageId: varchar("emailMessageId", { length: 64 }),
+  emailSentAt: timestamp("emailSentAt"),
+  /** Short, non-sensitive failure reason shown to admins so they can retry. */
+  emailError: varchar("emailError", { length: 255 }),
+  /**
+   * Receipt screenshot as a base64 data URL. Downscaled in the browser before
+   * upload and capped server-side, so MEDIUMTEXT (16 MB) is ample. Kept in the
+   * database rather than object storage so the only infrastructure this flow
+   * needs is MySQL, and so admins can always see what the model judged.
+   */
+  receiptImage: mediumtext("receiptImage"),
+  receiptSubmittedAt: timestamp("receiptSubmittedAt"),
+  /** Lifetime upload attempts; bounded so a bad actor cannot burn model calls. */
+  receiptAttempts: int("receiptAttempts").notNull().default(0),
+  /** The model's extraction, checks and verdict for the latest receipt. */
+  receiptAnalysis: json("receiptAnalysis").$type<ReceiptAnalysis>(),
+  verifiedAt: timestamp("verifiedAt"),
+  /** Audit trail: did the automated check or a human grant verification? */
+  verifiedBy: mysqlEnum("verifiedBy", ["ai", "admin"]),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ArrowUpRight,
   BookOpen,
@@ -7,17 +7,19 @@ import {
   ChevronDown,
   Clock3,
   Copy,
-  Facebook,
   HeartHandshake,
-  Instagram,
+  Mail,
   MapPin,
   Menu,
+  MessageCircle,
   Phone,
+  ShieldCheck,
   Sparkles,
   Users,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import DonationBar from "@/components/DonationBar";
 
 const heroImage = "/islamic-camp-environment.svg";
 
@@ -45,6 +47,27 @@ const rhythmCards = [
   },
 ];
 
+const registerSteps = [
+  {
+    number: "01",
+    title: "Fill the short form",
+    copy: "Participant name, your email and phone number, and the class they are in. It takes about a minute.",
+    icon: Users,
+  },
+  {
+    number: "02",
+    title: "Get your number by email",
+    copy: "We email your registration number and the camp details straight away, so you have everything in writing.",
+    icon: Mail,
+  },
+  {
+    number: "03",
+    title: "Pay and upload your receipt",
+    copy: "Transfer the fee when you are ready, upload a screenshot of the receipt, and it is checked automatically. Verified participants get the group link.",
+    icon: ShieldCheck,
+  },
+];
+
 const faqs = [
   {
     question: "Who is the programme for?",
@@ -52,9 +75,19 @@ const faqs = [
       "The IVC 2026 camping programme is for Muslim children, students, workers and parents. It is a community programme designed to nurture young hearts while bringing every generation together.",
   },
   {
-    question: "What does my donation support?",
+    question: "What happens after I register?",
     answer:
-      "Donations help cover welfare, feeding, accommodation, learning materials, transportation and other camp needs so every participant can have a safe, enriching and impactful experience.",
+      "Your place is saved immediately and you get a registration number. We email that number and the camp details to the address you give us, so keep an eye on your inbox (and your spam folder, just in case). You can pay later using the same number.",
+  },
+  {
+    question: "Do I need to pay to register?",
+    answer:
+      "No. Registration is saved before payment, so you can reserve a place first and pay when you are ready. Every participant, including siblings, needs their own registration.",
+  },
+  {
+    question: "How is my payment confirmed, and how do I join the WhatsApp group?",
+    answer:
+      "After transferring the fee, upload a screenshot of your bank receipt on the registration page. It is checked automatically within seconds; anything unclear is looked at by the team. Only confirmed participants receive the group link — on screen and by email — so please don’t share it on.",
   },
   {
     question: "Where and when is IVC 2026?",
@@ -83,40 +116,26 @@ function SectionLabel({ children }: { children: ReactNode }) {
 
 export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [registrationOpen, setRegistrationOpen] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [accountCopied, setAccountCopied] = useState(false);
 
   const closeMenu = () => setMenuOpen(false);
-  const openRegistration = () => {
-    setRegistrationOpen(true);
-    setSubmitted(false);
-    closeMenu();
-  };
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setSubmitted(true);
-    toast.success("Your support request is on its way.", {
-      description: "We’ll be in touch with the IVC 2026 support details shortly.",
-    });
-  };
 
   const copyAccountNumber = async () => {
     try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
       await navigator.clipboard.writeText("0019871510");
+      setAccountCopied(true);
       toast.success("Account number copied.");
+      window.setTimeout(() => setAccountCopied(false), 2500);
     } catch {
-      toast.error("Could not copy the account number. Please select it and copy manually.");
+      toast.error("Could not copy automatically. Please select the number and copy it manually.");
     }
   };
 
   return (
     <div className="site-shell">
-      <div className="announcement-bar">
-        <span>Fundraising for IVC 2026 is now open</span>
-        <a href="#support">Support the mission <ArrowUpRight size={14} /></a>
-      </div>
+      <DonationBar />
 
       <header className="site-header">
         <a href="#top" className="wordmark" aria-label="Hope-Alive home">
@@ -128,10 +147,10 @@ export default function Home() {
         </a>
         <nav className={`main-nav ${menuOpen ? "main-nav--open" : ""}`} aria-label="Main navigation">
           <a href="#why" onClick={closeMenu}>About IVC 2026</a>
-          <a href="#programme" onClick={closeMenu}>The programme</a>
+          <a href="#how" onClick={closeMenu}>How to register</a>
           <a href="#details" onClick={closeMenu}>Camp details</a>
-          <a href="#support" onClick={closeMenu}>Support the mission</a>
-          <a className="nav-cta nav-cta--mobile" href="/register">Register now <ArrowUpRight size={16} /></a>
+          <a href="#support" onClick={closeMenu}>Donate</a>
+          <a className="nav-cta nav-cta--mobile" href="/register" onClick={closeMenu}>Register now <ArrowUpRight size={16} /></a>
         </nav>
         <a className="nav-cta nav-cta--desktop" href="/register">Register now <ArrowUpRight size={16} /></a>
         <button className="menu-toggle" onClick={() => setMenuOpen(value => !value)} aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen}>
@@ -143,18 +162,17 @@ export default function Home() {
         <section className="hero-section">
           <div className="hero-copy">
             <SectionLabel><span className="label-dot" /> Islamic Vacation Course 2026</SectionLabel>
-            <h1>Help make a meaningful camp <em>possible.</em></h1>
-            <p className="hero-lede">Hope-Alive Muslim Foundation is raising support for a camping programme that nurtures young hearts with the light of Islam, builds character and creates lasting memories.</p>
+            <h1>Reserve their place <em>today.</em></h1>
+            <p className="hero-lede">Register for the IVC 2026 camping programme in Ilorin. Your place is saved straight away, your registration number is emailed to you, and payment can wait until you are ready.</p>
             <div className="hero-actions">
-              <a className="button button--ink" href="/register">Register a participant <ArrowUpRight size={18} /></a>
-              <a className="text-link" href="/register?mode=continue">Continue registration <span>↘</span></a>
+              <a className="button button--ink button--lg" href="/register">Register a participant <ArrowUpRight size={18} /></a>
+              <a className="text-link" href="/register?mode=continue">Continue a registration <span>↘</span></a>
             </div>
-            <div className="hero-proof">
-              <div className="avatar-stack" aria-hidden="true">
-                <span>AM</span><span>ZA</span><span>RK</span><span>+</span>
-              </div>
-              <p><strong>Faith · Education · Community</strong><br />A brighter future for our youth.</p>
-            </div>
+            <ul className="hero-assurances">
+              <li><Check size={14} /> Free to register — pay later</li>
+              <li><Check size={14} /> Confirmation emailed instantly</li>
+              <li><Check size={14} /> Takes about a minute</li>
+            </ul>
           </div>
           <div className="hero-visual">
             <div className="hero-image-wrap">
@@ -163,7 +181,7 @@ export default function Home() {
             </div>
             <div className="hero-sticker hero-sticker--top">learn <span>with</span> heart</div>
             <div className="hero-info-card">
-              <div className="hero-info-card__top"><span>Camping programme</span><span className="status-pill"><i /> Support open</span></div>
+              <div className="hero-info-card__top"><span>Camping programme</span><span className="status-pill"><i /> Registration open</span></div>
               <strong>23rd–28th December 2026</strong>
               <small>Ethical College · Ilorin</small>
               <div className="hero-info-card__rule" />
@@ -176,7 +194,30 @@ export default function Home() {
         <section className="signal-strip" aria-label="Course highlights">
           <div><span className="signal-icon"><Users size={17} /></span><span><strong>For the whole community</strong><small>children, students, workers and parents</small></span></div>
           <div><span className="signal-icon"><CalendarDays size={17} /></span><span><strong>23rd–28th December</strong><small>IVC 2026 camping programme</small></span></div>
-          <div><span className="signal-icon"><HeartHandshake size={17} /></span><span><strong>Give with purpose</strong><small>help make the camp meaningful</small></span></div>
+          <div><span className="signal-icon"><ShieldCheck size={17} /></span><span><strong>Register before you pay</strong><small>your place is saved immediately</small></span></div>
+        </section>
+
+        <section id="how" className="steps-section section-padding">
+          <div className="steps-heading">
+            <div>
+              <SectionLabel>How to register</SectionLabel>
+              <h2>Three steps,<br /><em>one minute.</em></h2>
+            </div>
+            <p>Registration is open to every participant. Siblings each get their own number, so register them one at a time.</p>
+          </div>
+          <div className="steps-grid">
+            {registerSteps.map(({ number, title, copy, icon: Icon }) => (
+              <article className="step-card" key={title}>
+                <div className="step-card__head"><span className="step-card__number">{number}</span><span className="step-card__icon"><Icon size={18} strokeWidth={1.7} /></span></div>
+                <h3>{title}</h3>
+                <p>{copy}</p>
+              </article>
+            ))}
+          </div>
+          <div className="steps-cta">
+            <a className="button button--ink button--lg" href="/register">Start registration <ArrowUpRight size={18} /></a>
+            <span>No payment needed to reserve a place.</span>
+          </div>
         </section>
 
         <section id="why" className="story-section section-padding">
@@ -190,9 +231,9 @@ export default function Home() {
             <p className="story-intro">The Islamic Vacation Course is a unique opportunity to build character, deepen faith and create lasting memories in a safe, enriching camping environment.</p>
             <div className="story-columns">
               <p>Hope-Alive Muslim Foundation brings together faith, education and community so every participant can grow in confidence, compassion and responsibility.</p>
-              <p>Your donation helps provide welfare, feeding, accommodation, learning materials, transportation and other camp needs for every participant.</p>
+              <p>Six days of camping, learning and friendship in Ilorin, guided by people who care about where these young people are headed.</p>
             </div>
-            <a href="#support" className="circle-link">Make a difference <ArrowUpRight size={19} /></a>
+            <a href="/register" className="circle-link">Register a participant <ArrowUpRight size={19} /></a>
           </div>
         </section>
 
@@ -214,7 +255,7 @@ export default function Home() {
               </article>
             ))}
           </div>
-          <div className="programme-note"><span className="note-line" /><p><strong>Our promise:</strong> every contribution helps make this meaningful programme a success.</p><a href="#support">See what your gift supports <ArrowUpRight size={16} /></a></div>
+          <div className="programme-note"><span className="note-line" /><p><strong>Our promise:</strong> a safe, enriching and impactful experience for every participant.</p><a href="/register">Register a participant <ArrowUpRight size={16} /></a></div>
         </section>
 
         <section className="quote-section section-padding">
@@ -227,36 +268,21 @@ export default function Home() {
           <div className="details-intro">
             <SectionLabel>Camp details</SectionLabel>
             <h2>A meaningful<br /><em>December.</em></h2>
-            <p>Help us provide a safe, enriching and impactful experience for every participant at this year’s Islamic Vacation Course.</p>
-            <a className="button button--outline" href="/register">Register a participant <ArrowUpRight size={18} /></a>
+            <p>Everything you need to know before you register a participant for this year’s Islamic Vacation Course.</p>
+            <a className="button button--ink" href="/register">Register a participant <ArrowUpRight size={18} /></a>
           </div>
           <div className="details-list">
             <div className="detail-row"><span className="detail-icon"><CalendarDays size={19} /></span><div><span className="detail-label">Date</span><strong>23rd–28th December, 2026</strong><p>Six days of camping, learning and community</p></div></div>
             <div className="detail-row"><span className="detail-icon"><MapPin size={19} /></span><div><span className="detail-label">Venue</span><strong>Ethical College, Ilorin</strong><p>Behind Okin Filling Station, Opposite Agric, Zango Road, Ilorin</p></div></div>
             <div className="detail-row"><span className="detail-icon"><Users size={19} /></span><div><span className="detail-label">Categories</span><strong>Muslim children, students, workers and parents</strong><p>A community programme for every generation</p></div></div>
-            <div className="detail-row"><span className="detail-icon"><Clock3 size={19} /></span><div><span className="detail-label">Fundraising goal</span><strong>Welfare, feeding and accommodation</strong><p>Learning materials, transportation and other camp needs</p></div></div>
-          </div>
-        </section>
-
-        <section id="support" className="support-section section-padding">
-          <div className="support-copy">
-            <SectionLabel>Support our mission</SectionLabel>
-            <h2>Your gift can turn a good idea into a <em>life-changing week.</em></h2>
-            <p>We are raising funds to cover key aspects of the camp so that every participant can experience the programme with dignity, safety and joy.</p>
-            <div className="support-needs">
-              <span><Check size={15} /> Welfare</span><span><Check size={15} /> Feeding</span><span><Check size={15} /> Accommodation</span><span><Check size={15} /> Learning materials</span><span><Check size={15} /> Transportation</span><span><Check size={15} /> Other camp needs</span>
-            </div>
-            <a className="whatsapp-link" href="https://wa.me/2348057782932" target="_blank" rel="noreferrer"><span>WA</span> Enquiries & support: <strong>08057782932</strong> <ArrowUpRight size={16} /></a>
-          </div>
-          <div className="support-panel">
-            <div className="account-card"><span className="detail-label">Account details</span><strong>Hope-alive Muslim Found.</strong><div className="account-number-row"><span className="account-number">0019871510</span><button className="copy-account-button" type="button" aria-label="Copy account number" title="Copy account number" onClick={copyAccountNumber}><Copy size={16} /></button></div><span>Jaiz Bank</span><button className="button button--cream" onClick={openRegistration}>I want to support <ArrowUpRight size={17} /></button></div>
+            <div className="detail-row"><span className="detail-icon"><Clock3 size={19} /></span><div><span className="detail-label">Registration</span><strong>Open now — pay later</strong><p>Your place is saved before payment is made</p></div></div>
           </div>
         </section>
 
         <section id="stories" className="stories-section section-padding">
           <div className="stories-topline"><SectionLabel>Make a difference</SectionLabel><span>02<span>/03</span></span></div>
           <div className="stories-layout">
-            <div className="stories-copy"><h2>The moments that<br /><em>stay with you.</em></h2><p>We measure a good camp in stronger character, deeper faith, new friendships and memories that keep giving long after the tents come down.</p><a href="#support" className="text-link">Help make it possible <span>↘</span></a></div>
+            <div className="stories-copy"><h2>The moments that<br /><em>stay with you.</em></h2><p>We measure a good camp in stronger character, deeper faith, new friendships and memories that keep giving long after the tents come down.</p><a href="/register" className="text-link">Register a participant <span>↘</span></a></div>
             <div className="story-cards">
               <article className="story-card story-card--olive"><span className="story-card__quote">“</span><p>Every contribution brings us closer to a safe, enriching and impactful experience for every participant.</p><span className="story-card__name">— Hope-Alive Muslim Foundation</span></article>
               <article className="story-card story-card--cream"><span className="story-card__quote">“</span><p>Together we can build a brighter future for our youth.</p><span className="story-card__name">— IVC 2026 campaign</span></article>
@@ -277,39 +303,51 @@ export default function Home() {
           </div>
         </section>
 
+        <section id="support" className="support-section section-padding">
+          <div className="support-copy">
+            <SectionLabel>Support our mission</SectionLabel>
+            <h2>Already registered? <em>Help another family.</em></h2>
+            <p>Donations are entirely optional and separate from registration. They help cover welfare, feeding, accommodation, learning materials and transportation so every participant can take part with dignity.</p>
+            <div className="support-needs">
+              <span><Check size={15} /> Welfare</span><span><Check size={15} /> Feeding</span><span><Check size={15} /> Accommodation</span><span><Check size={15} /> Learning materials</span><span><Check size={15} /> Transportation</span><span><Check size={15} /> Other camp needs</span>
+            </div>
+            <a className="whatsapp-link" href="https://wa.me/2348057782932" target="_blank" rel="noreferrer"><span>WA</span> Enquiries & support: <strong>08057782932</strong> <ArrowUpRight size={16} /></a>
+          </div>
+          <div className="support-panel">
+            <div className="account-card">
+              <span className="detail-label">Donation account</span>
+              <strong>Hope-alive Muslim Found.</strong>
+              <div className="account-number-row">
+                <span className="account-number">0019871510</span>
+                <button className="copy-account-button" type="button" aria-label="Copy account number" title="Copy account number" onClick={copyAccountNumber}>
+                  {accountCopied ? <Check size={16} /> : <Copy size={16} />}
+                </button>
+              </div>
+              <span>Jaiz Bank</span>
+              <p className="account-card__note">Donations are acknowledged by the team. If you have a question before or after giving, message us on WhatsApp.</p>
+              <a className="button button--outline button--full" href="https://wa.me/2348057782932" target="_blank" rel="noreferrer">
+                <MessageCircle size={17} /> Ask us about donating
+              </a>
+            </div>
+          </div>
+        </section>
+
         <section className="final-cta section-padding">
           <div className="final-cta__shape final-cta__shape--one" />
           <div className="final-cta__shape final-cta__shape--two" />
-          <SectionLabel><span className="label-dot label-dot--light" /> Make a difference</SectionLabel>
+          <SectionLabel><span className="label-dot label-dot--light" /> Registration is open</SectionLabel>
           <h2>Give them a week<br /><em>they’ll carry forward.</em></h2>
-          <p>Support the IVC 2026 camping programme and help Hope-Alive nurture young hearts with faith, education and community.</p>
-          <a className="button button--cream" href="/register">Register now <ArrowUpRight size={18} /></a>
+          <p>Reserve a place at the IVC 2026 camping programme. It takes about a minute, and payment can wait.</p>
+          <a className="button button--ink button--lg" href="/register">Register a participant <ArrowUpRight size={18} /></a>
+          <a className="text-link text-link--on-sage" href="/register?mode=continue">Continue a registration <span>↘</span></a>
         </section>
       </main>
 
       <footer className="site-footer">
         <div className="footer-brand"><a href="#top" className="wordmark wordmark--footer"><Mark compact /><span><strong>hope-alive</strong><small>Muslim foundation</small></span></a><p>Faith · Education · Community<br />Together, we can build a brighter future.</p></div>
-        <div className="footer-links"><div><span>Explore</span><a href="#why">About IVC 2026</a><a href="#programme">The programme</a><a href="#details">Camp details</a><a href="#support">Support the mission</a></div><div><span>Connect</span><a href="https://wa.me/2348057782932" target="_blank" rel="noreferrer"><Phone size={14} /> 08057782932</a><a href="#support"><BookOpen size={14} /> Jaiz Bank · 0019871510</a><div className="social-links"><a href="#top" aria-label="Instagram"><Instagram size={17} /></a><a href="#top" aria-label="Facebook"><Facebook size={17} /></a></div></div></div>
+        <div className="footer-links"><div><span>Explore</span><a href="#why">About IVC 2026</a><a href="#how">How to register</a><a href="#details">Camp details</a><a href="/register">Register a participant</a></div><div><span>Connect</span><a href="https://wa.me/2348057782932" target="_blank" rel="noreferrer"><Phone size={14} /> 08057782932</a><a href="#support"><BookOpen size={14} /> Jaiz Bank · 0019871510</a></div></div>
         <div className="footer-bottom"><span>© 2026 Hope-Alive</span><span>Made with intention.</span><a href="#top">Back to top ↑</a></div>
       </footer>
-
-      {registrationOpen && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) setRegistrationOpen(false); }}>
-        <div className="registration-modal" role="dialog" aria-modal="true" aria-labelledby="registration-title">
-          <button className="modal-close" onClick={() => setRegistrationOpen(false)} aria-label="Close registration form"><X size={20} /></button>
-          {!submitted ? <>
-            <SectionLabel>Support IVC 2026</SectionLabel>
-            <h2 id="registration-title">Start with a<br /><em>simple hello.</em></h2>
-            <p className="modal-intro">Tell us a little about yourself and we’ll send the IVC 2026 support pack, donation details and next steps.</p>
-            <form onSubmit={handleSubmit} className="registration-form">
-              <label>Your name<input required name="name" placeholder="Your name" /></label>
-              <label>Email address<input required type="email" name="email" placeholder="you@example.com" /></label>
-              <label>How would you like to help?<input required name="support" placeholder="Donation, volunteering, materials…" /></label>
-              <label className="form-check"><input required type="checkbox" /> <span>I’m happy to receive the IVC 2026 support pack by email.</span></label>
-              <button className="button button--ink button--full" type="submit">Send my request <ArrowUpRight size={18} /></button>
-            </form>
-          </> : <div className="success-state"><span className="success-icon"><Check size={26} /></span><SectionLabel>Thank you</SectionLabel><h2>You’re on the<br /><em>right list.</em></h2><p>We’ve received your request. Keep an eye on your inbox for the IVC 2026 support pack and next steps.</p><button className="button button--outline button--full" onClick={() => setRegistrationOpen(false)}>Close this window</button></div>}
-        </div>
-      </div>}
     </div>
   );
 }
