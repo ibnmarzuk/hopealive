@@ -15,7 +15,7 @@ Required for the registration flow to work end to end:
 
 | Variable | Purpose | Without it |
 | --- | --- | --- |
-| `DATABASE_URL` | MySQL connection | Registration returns "temporarily unavailable" |
+| `DATABASE_URL` or `POSTGRES_URL` | Supabase/PostgreSQL connection string | Registration returns "temporarily unavailable" |
 | `RESEND_API_KEY` | Resend API key, server-side only | Registrations still save; `emailStatus` is `skipped` |
 | `RESEND_FROM_EMAIL` | Sender on a domain **verified in Resend** | Same as above |
 | `APP_URL` | Public base URL | Confirmation email omits the "continue" link |
@@ -23,16 +23,15 @@ Required for the registration flow to work end to end:
 `RESEND_REPLY_TO` is optional. The Resend key is read only in `server/email/resend.ts`; it is never
 added to `server/_core/publicConfig.ts`, so it cannot reach the browser.
 
-Run `pnpm db:migrate` after setting `DATABASE_URL` to apply migration `0002`, which adds
-`guardianEmail`, the `dedupeKey` unique index used for duplicate prevention, and the email
-delivery columns.
+Run `pnpm db:migrate` after setting `DATABASE_URL` or `POSTGRES_URL` to create the PostgreSQL
+schema. The checked-in migrations are the source of truth for a new Supabase database.
 
 ## Registration and email flow
 
 1. The browser validates against `shared/registration.ts` (the same schema the server uses).
 2. `registration.create` rate-limits, re-validates, and rejects duplicates — a duplicate is the
    same normalised name + phone + class, so siblings and class changes still register.
-3. The registration is committed to MySQL.
+3. The registration is committed to PostgreSQL.
 4. Only then is the confirmation email sent through Resend. **A delivery failure never rolls back a
    saved registration**: the row keeps `emailStatus` `failed`/`skipped` plus a short reason, and the
    admin dashboard offers a Resend action.
@@ -44,8 +43,8 @@ delivery columns.
 `pnpm test` runs 64 tests, including the registration procedures against a fake DB and a mocked
 Resend. These still need live credentials and a manual check:
 
-- Writing to a real MySQL instance (persistence, the `dedupeKey` unique index under real concurrency,
-  and migration `0002` against existing rows).
+- Writing to a real Supabase/PostgreSQL instance (persistence and the `dedupeKey` unique index under
+  real concurrency).
 - A real Resend send: set `RESEND_API_KEY` and a verified `RESEND_FROM_EMAIL`, register once, and
   confirm the message appears in the Resend dashboard and the inbox.
 - Sender-domain SPF/DKIM must be verified in Resend, or sends are rejected with an unverified-domain

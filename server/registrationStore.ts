@@ -1,20 +1,20 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
-import { registrations, type Registration } from "../drizzle/schema";
+import { registrationCounters, registrations, type Registration } from "../drizzle/schema";
 import { getDb } from "./db";
 import type { EmailStatus } from "@shared/registration";
 
 /**
  * Data access for registrations, behind one interface with two backends:
  *
- *  - MysqlStore  — the real database, used whenever DATABASE_URL is set.
+ *  - PostgresStore — the real database, used whenever a database URL is set.
  *  - MemoryStore — a zero-config fallback (persisted to .data/registrations.json)
  *                  used when no database is configured, so the app — including the
  *                  admin dashboard — works out of the box in local/preview runs.
  *
  * The router talks only to this interface, so the two paths can never drift in
- * behaviour. In production the platform provides DATABASE_URL and MySQL is used.
+ * behaviour. In production the platform provides DATABASE_URL or POSTGRES_URL.
  */
 
 export class DuplicateRegistrationError extends Error {
@@ -94,17 +94,17 @@ const ADMIN_COLUMNS = {
   createdAt: registrations.createdAt,
 } as const;
 
-/** MySQL reports a unique-index collision as ER_DUP_ENTRY / errno 1062. */
+/** PostgreSQL reports unique-index collisions with SQLSTATE 23505. */
 function isDuplicateKeyError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const candidate = error as { code?: unknown; errno?: unknown; cause?: unknown };
-  if (candidate.code === "ER_DUP_ENTRY" || candidate.errno === 1062) return true;
+  if (candidate.code === "23505") return true;
   return candidate.cause ? isDuplicateKeyError(candidate.cause) : false;
 }
 
 type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 
-class MysqlStore implements RegistrationStore {
+class PostgresStore implements RegistrationStore {
   constructor(private readonly db: Db) {}
 
   async findByDedupeKey(dedupeKey: string) {
@@ -119,15 +119,13 @@ class MysqlStore implements RegistrationStore {
   async create(data: CreateRegistrationData): Promise<string> {
     try {
       return await this.db.transaction(async tx => {
-        await tx.execute(
-          sql`INSERT INTO registration_counters (classGroup, lastNumber) VALUES (${data.classGroup}, 0) ON DUPLICATE KEY UPDATE classGroup = VALUES(classGroup)`,
-        );
-        const counterResult = await tx.execute(
-          sql`SELECT lastNumber FROM registration_counters WHERE classGroup = ${data.classGroup} FOR UPDATE`,
-        );
-        const rows = (counterResult as unknown as [{ lastNumber: number }[], unknown])[0];
-        const nextNumber = Number(rows[0]?.lastNumber ?? 0) + 1;
-        await tx.execute(sql`UPDATE registration_counters SET lastNumber = ${nextNumber} WHERE classGroup = ${data.classGroup}`);
+        await tx.insert(registrationCounters).values({ classGroup: data.classGroup, lastNumber: 0 }).onConflictDoNothing({ target: registrationCounters.classGroup });
+        const [counter] = await tx.select({ lastNumber: registrationCounters.lastNumber })
+          .from(registrationCounters)
+          .where(eq(registrationCounters.classGroup, data.classGroup))
+          .for("update");
+        const nextNumber = Number(counter?.lastNumber ?? 0) + 1;
+        await tx.update(registrationCounters).set({ lastNumber: nextNumber }).where(eq(registrationCounters.classGroup, data.classGroup));
 
         const allocated = `${data.prefix}-${String(nextNumber).padStart(3, "0")}`;
         await tx.insert(registrations).values({
@@ -329,15 +327,20 @@ class MemoryStore implements RegistrationStore {
   }
 }
 
-let mysqlStore: { db: Db; store: MysqlStore } | null = null;
+let postgresStore: { db: Db; store: PostgresStore } | null = null;
 let memoryStore: MemoryStore | null = null;
 
-/** Returns the MySQL store when a database is configured, else the local fallback. */
+/** Returns the PostgreSQL store when a database is configured, else the local fallback. */
 export async function getStore(): Promise<RegistrationStore> {
   const db = await getDb();
   if (db) {
-    if (!mysqlStore || mysqlStore.db !== db) mysqlStore = { db, store: new MysqlStore(db) };
-    return mysqlStore.store;
+    if (!postgresStore || postgresStore.db !== db) postgresStore = { db, store: new PostgresStore(db) };
+    return postgresStore.store;
+  }
+  // The JSON store is useful for local development, but it is not durable on
+  // serverless hosts and must never silently accept production registrations.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Registration storage is unavailable. Configure DATABASE_URL or POSTGRES_URL before accepting registrations.");
   }
   if (!memoryStore) memoryStore = new MemoryStore();
   return memoryStore;
@@ -346,5 +349,5 @@ export async function getStore(): Promise<RegistrationStore> {
 /** Test helper — drops the in-memory fallback so each test starts clean. */
 export function resetStoreForTests() {
   memoryStore = null;
-  mysqlStore = null;
+  postgresStore = null;
 }
