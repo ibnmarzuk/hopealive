@@ -5,11 +5,14 @@
   # Vite writes the client bundle to dist/public (dist/ itself only holds the Express server bundle)
   publish = "dist/public"
 
-# Unknown API paths return a real 404 instead of the SPA's index.html
+# Proxy API requests to the production backend hosted on Vercel. This keeps the
+# Netlify frontend on the same origin as its API while the database stays on
+# the Vercel-hosted backend.
 [[redirects]]
   from = "/api/*"
-  to = "/404"
-  status = 404
+  to = "https://hopealive-eight.vercel.app/api/:splat"
+  status = 200
+  force = true
 
 # Client-side routes (/register, /admin, ...) are handled by the React router
 [[redirects]]
