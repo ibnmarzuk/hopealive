@@ -15,10 +15,9 @@ import {
 } from "@shared/registration";
 import { TRPCError } from "@trpc/server";
 import { createHash } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { registrations, type Registration } from "../drizzle/schema";
-import { getDb } from "./db";
+import type { Registration } from "../drizzle/schema";
+import { DuplicateRegistrationError, getStore } from "./registrationStore";
 import {
   emailConfigurationProblem,
   isEmailConfigured,
@@ -57,18 +56,6 @@ const RATE_LIMITS = {
   receiptIp: { limit: 20, windowMs: 60 * 60 * 1000 },
 };
 
-function requireDb() {
-  return getDb().then(db => {
-    if (!db) {
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: "Registration service is temporarily unavailable. Please try again shortly.",
-      });
-    }
-    return db;
-  });
-}
-
 function requireClassGroup(schoolClass: string): ClassGroup {
   const group = findClassGroup(schoolClass);
   if (!group) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select a valid school class." });
@@ -77,14 +64,6 @@ function requireClassGroup(schoolClass: string): ClassGroup {
 
 function fingerprintHash(input: { studentName: string; guardianPhone: string; schoolClass: string }): string {
   return createHash("sha256").update(dedupeFingerprint(input)).digest("hex");
-}
-
-/** MySQL reports a unique-index collision as ER_DUP_ENTRY / errno 1062. */
-function isDuplicateKeyError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const candidate = error as { code?: unknown; errno?: unknown; cause?: unknown };
-  if (candidate.code === "ER_DUP_ENTRY" || candidate.errno === 1062) return true;
-  return candidate.cause ? isDuplicateKeyError(candidate.cause) : false;
 }
 
 const DUPLICATE_MESSAGE =
@@ -230,7 +209,7 @@ export const appRouter = router({
         });
       }
 
-      const db = await requireDb();
+      const store = await getStore();
       const classGroup = requireClassGroup(input.schoolClass);
       const prefix = GROUP_PREFIXES[classGroup];
       const guardianPhone = normalizePhone(input.guardianPhone);
@@ -238,43 +217,25 @@ export const appRouter = router({
       const dedupeKey = fingerprintHash({ studentName, guardianPhone, schoolClass: input.schoolClass });
 
       // Cheap pre-check so a duplicate submission does not consume a
-      // registration number. The unique index is the authoritative guard.
-      const existing = await db
-        .select({ registrationNumber: registrations.registrationNumber })
-        .from(registrations)
-        .where(eq(registrations.dedupeKey, dedupeKey))
-        .limit(1);
-      if (existing[0]) throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+      // registration number. The store's unique key is the authoritative guard.
+      if (await store.findByDedupeKey(dedupeKey)) {
+        throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+      }
 
       let registrationNumber: string;
       try {
-        registrationNumber = await db.transaction(async tx => {
-          await tx.execute(
-            sql`INSERT INTO registration_counters (classGroup, lastNumber) VALUES (${classGroup}, 0) ON DUPLICATE KEY UPDATE classGroup = VALUES(classGroup)`,
-          );
-          const counterResult = await tx.execute(
-            sql`SELECT lastNumber FROM registration_counters WHERE classGroup = ${classGroup} FOR UPDATE`,
-          );
-          const rows = (counterResult as unknown as [{ lastNumber: number }[], unknown])[0];
-          const nextNumber = Number(rows[0]?.lastNumber ?? 0) + 1;
-          await tx.execute(sql`UPDATE registration_counters SET lastNumber = ${nextNumber} WHERE classGroup = ${classGroup}`);
-
-          const allocated = `${prefix}-${String(nextNumber).padStart(3, "0")}`;
-          await tx.insert(registrations).values({
-            studentName,
-            guardianEmail,
-            guardianPhone,
-            schoolClass: input.schoolClass,
-            classGroup,
-            registrationNumber: allocated,
-            dedupeKey,
-            emailStatus: isEmailConfigured() ? "pending" : "skipped",
-          });
-
-          return allocated;
+        registrationNumber = await store.create({
+          studentName,
+          guardianEmail,
+          guardianPhone,
+          schoolClass: input.schoolClass,
+          classGroup,
+          prefix,
+          dedupeKey,
+          emailStatus: isEmailConfigured() ? "pending" : "skipped",
         });
       } catch (error) {
-        if (isDuplicateKeyError(error)) throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+        if (error instanceof DuplicateRegistrationError) throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
         console.error("[Registration] Failed to save registration:", error);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -294,14 +255,12 @@ export const appRouter = router({
       });
 
       try {
-        await db
-          .update(registrations)
-          .set(
-            emailResult.status === "sent"
-              ? { emailStatus: "sent", emailMessageId: emailResult.messageId, emailSentAt: new Date(), emailError: null }
-              : { emailStatus: emailResult.status, emailError: emailResult.reason.slice(0, 255) },
-          )
-          .where(eq(registrations.registrationNumber, registrationNumber));
+        await store.updateByNumber(
+          registrationNumber,
+          emailResult.status === "sent"
+            ? { emailStatus: "sent", emailMessageId: emailResult.messageId, emailSentAt: new Date(), emailError: null }
+            : { emailStatus: emailResult.status, emailError: emailResult.reason.slice(0, 255) },
+        );
       } catch (error) {
         // Losing the delivery breadcrumb is not worth failing the request over.
         console.error(`[Registration] Could not record email status for ${registrationNumber}:`, error);
@@ -326,14 +285,8 @@ export const appRouter = router({
     }),
 
     resume: publicProcedure.input(registrationLookupSchema).query(async ({ input }) => {
-      const db = await requireDb();
-      const registrationNumber = input.registrationNumber.toUpperCase();
-      const result = await db
-        .select()
-        .from(registrations)
-        .where(eq(registrations.registrationNumber, registrationNumber))
-        .limit(1);
-      const registration = result[0];
+      const store = await getStore();
+      const registration = await store.findByNumber(input.registrationNumber.toUpperCase());
       if (!registration || registration.guardianPhone !== normalizePhone(input.guardianPhone)) {
         throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
       }
@@ -355,16 +308,12 @@ export const appRouter = router({
         });
       }
 
-      const db = await requireDb();
-      const registrationNumber = input.registrationNumber.toUpperCase();
+      const store = await getStore();
       const phone = normalizePhone(input.guardianPhone);
-      const found = await db
-        .select()
-        .from(registrations)
-        .where(and(eq(registrations.registrationNumber, registrationNumber), eq(registrations.guardianPhone, phone)))
-        .limit(1);
-      const registration = found[0];
-      if (!registration) throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
+      const registration = await store.findByNumber(input.registrationNumber.toUpperCase());
+      if (!registration || registration.guardianPhone !== phone) {
+        throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
+      }
 
       // Already confirmed: nothing to do.
       if (registration.verificationStatus === "verified") {
@@ -379,18 +328,15 @@ export const appRouter = router({
       }
 
       const attempts = registration.receiptAttempts + 1;
-      await db
-        .update(registrations)
-        .set({
-          receiptImage: input.imageDataUrl,
-          receiptSubmittedAt: new Date(),
-          receiptAttempts: attempts,
-          receiptStatus: "submitted",
-          // Awaiting a human: "claimed" by the registrant, pending verification.
-          paymentStatus: "payment_claimed",
-          verificationStatus: "pending",
-        })
-        .where(eq(registrations.id, registration.id));
+      await store.updateById(registration.id, {
+        receiptImage: input.imageDataUrl,
+        receiptSubmittedAt: new Date(),
+        receiptAttempts: attempts,
+        receiptStatus: "submitted",
+        // Awaiting a human: "claimed" by the registrant, pending verification.
+        paymentStatus: "payment_claimed",
+        verificationStatus: "pending",
+      });
 
       return {
         outcome: "submitted" as const,
@@ -405,31 +351,8 @@ export const appRouter = router({
     }),
 
     adminList: adminProcedure.query(async () => {
-      const db = await requireDb();
-      // Everything except the image, which is fetched per row on demand.
-      const rows = await db
-        .select({
-          id: registrations.id,
-          studentName: registrations.studentName,
-          guardianEmail: registrations.guardianEmail,
-          guardianPhone: registrations.guardianPhone,
-          schoolClass: registrations.schoolClass,
-          classGroup: registrations.classGroup,
-          registrationNumber: registrations.registrationNumber,
-          paymentStatus: registrations.paymentStatus,
-          receiptStatus: registrations.receiptStatus,
-          verificationStatus: registrations.verificationStatus,
-          emailStatus: registrations.emailStatus,
-          emailError: registrations.emailError,
-          receiptSubmittedAt: registrations.receiptSubmittedAt,
-          receiptAttempts: registrations.receiptAttempts,
-          verifiedAt: registrations.verifiedAt,
-          verifiedBy: registrations.verifiedBy,
-          notes: registrations.notes,
-          createdAt: registrations.createdAt,
-        })
-        .from(registrations)
-        .orderBy(desc(registrations.createdAt));
+      const store = await getStore();
+      const rows = await store.listForAdmin();
       return {
         rows,
         emailConfigured: isEmailConfigured(),
@@ -441,14 +364,10 @@ export const appRouter = router({
 
     /** The stored receipt screenshot for one registration, fetched on demand. */
     adminReceiptImage: adminProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => {
-      const db = await requireDb();
-      const result = await db
-        .select({ receiptImage: registrations.receiptImage, receiptSubmittedAt: registrations.receiptSubmittedAt })
-        .from(registrations)
-        .where(eq(registrations.id, input.id))
-        .limit(1);
-      if (!result[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Registration not found." });
-      return result[0];
+      const store = await getStore();
+      const result = await store.getReceiptImage(input.id);
+      if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Registration not found." });
+      return result;
     }),
 
     /**
@@ -459,9 +378,8 @@ export const appRouter = router({
     adminUpdateStatus: adminProcedure
       .input(z.object({ id: z.number().int().positive(), paymentStatus: z.enum(PAYMENT_STATUSES) }))
       .mutation(async ({ input }) => {
-        const db = await requireDb();
-        const result = await db.select().from(registrations).where(eq(registrations.id, input.id)).limit(1);
-        const registration = result[0];
+        const store = await getStore();
+        const registration = await store.findById(input.id);
         if (!registration) throw new TRPCError({ code: "NOT_FOUND", message: "Registration not found." });
 
         const verificationStatus =
@@ -474,14 +392,11 @@ export const appRouter = router({
                 : "pending";
         const becomingVerified = verificationStatus === "verified" && registration.verificationStatus !== "verified";
 
-        await db
-          .update(registrations)
-          .set({
-            paymentStatus: input.paymentStatus,
-            verificationStatus,
-            ...(becomingVerified ? { verifiedAt: new Date(), verifiedBy: "admin" as const } : {}),
-          })
-          .where(eq(registrations.id, input.id));
+        await store.updateById(input.id, {
+          paymentStatus: input.paymentStatus,
+          verificationStatus,
+          ...(becomingVerified ? { verifiedAt: new Date(), verifiedBy: "admin" as const } : {}),
+        });
 
         if (becomingVerified) await notifyPaymentVerified(registration);
 
@@ -492,9 +407,8 @@ export const appRouter = router({
     adminResendEmail: adminProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ input }) => {
-        const db = await requireDb();
-        const result = await db.select().from(registrations).where(eq(registrations.id, input.id)).limit(1);
-        const registration = result[0];
+        const store = await getStore();
+        const registration = await store.findById(input.id);
         if (!registration) throw new TRPCError({ code: "NOT_FOUND", message: "Registration not found." });
         if (!registration.guardianEmail) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "This registration has no email address on file." });
@@ -518,14 +432,12 @@ export const appRouter = router({
           { idempotencySuffix: `retry-${Math.floor(Date.now() / 60_000)}` },
         );
 
-        await db
-          .update(registrations)
-          .set(
-            emailResult.status === "sent"
-              ? { emailStatus: "sent", emailMessageId: emailResult.messageId, emailSentAt: new Date(), emailError: null }
-              : { emailStatus: emailResult.status, emailError: emailResult.reason.slice(0, 255) },
-          )
-          .where(eq(registrations.id, registration.id));
+        await store.updateById(
+          registration.id,
+          emailResult.status === "sent"
+            ? { emailStatus: "sent", emailMessageId: emailResult.messageId, emailSentAt: new Date(), emailError: null }
+            : { emailStatus: emailResult.status, emailError: emailResult.reason.slice(0, 255) },
+        );
 
         if (emailResult.status !== "sent") {
           throw new TRPCError({
