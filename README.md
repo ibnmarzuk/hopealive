@@ -29,13 +29,17 @@ schema. The checked-in migrations are the source of truth for a new Supabase dat
 ## Registration and email flow
 
 1. The browser validates against `shared/registration.ts` (the same schema the server uses).
-2. `registration.create` rate-limits, re-validates, and rejects duplicates — a duplicate is the
-   same normalised name + phone + class, so siblings and class changes still register.
-3. The registration is committed to PostgreSQL.
-4. Only then is the confirmation email sent through Resend. **A delivery failure never rolls back a
-   saved registration**: the row keeps `emailStatus` `failed`/`skipped` plus a short reason, and the
-   admin dashboard offers a Resend action.
-5. The UI reports the real outcome. `emailStatus: "sent"` means Resend *accepted* the message, not
+2. Families of 2–6 children register together via `registration.createFamily`. Each child gets a
+   class-group ID (`MIDDLE-001`); the family shares one `HA-…` passkey for a single payment and
+   receipt. Email is optional.
+3. `registration.create` / `createFamily` rate-limit, re-validate, and reject duplicates — a
+   duplicate is the same normalised name + phone + class, so siblings and class changes still
+   register.
+4. The registration is committed to PostgreSQL.
+5. Only then is the confirmation email sent through Resend, and only if the guardian opted in.
+   **A delivery failure never rolls back a saved registration**: the row keeps `emailStatus`
+   `failed`/`skipped` plus a short reason, and the admin dashboard offers a Resend action.
+6. The UI reports the real outcome. `emailStatus: "sent"` means Resend *accepted* the message, not
    that it was delivered — the copy to the user says so.
 
 ### Verification not covered by `pnpm test`

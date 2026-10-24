@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -41,7 +41,7 @@ type FieldErrors = Record<string, string>;
 function collectErrors(issues: { path: PropertyKey[]; message: string }[]): FieldErrors {
   const errors: FieldErrors = {};
   for (const issue of issues) {
-    const key = String(issue.path[0] ?? "form");
+    const key = issue.path.length ? issue.path.join(".") : "form";
     if (!errors[key]) errors[key] = issue.message;
   }
   return errors;
@@ -106,10 +106,8 @@ export default function Registration() {
   const initialMode = new URLSearchParams(window.location.search).get("mode");
 
   const [view, setView] = useState<View>(initialMode === "continue" ? "resume" : "form");
-  const [studentName, setStudentName] = useState("");
   const [guardianEmail, setGuardianEmail] = useState("");
   const [guardianPhone, setGuardianPhone] = useState("");
-  const [schoolClass, setSchoolClass] = useState("");
   const [registrationType, setRegistrationType] = useState<"individual" | "family">("individual");
   const [participants, setParticipants] = useState([{ studentName: "", schoolClass: "" }]);
   const [consentToEmail, setConsentToEmail] = useState(false);
@@ -157,12 +155,22 @@ export default function Registration() {
     onError: error => setReceiptError(friendlyErrorMessage(error)),
   });
 
-  const selectedGroup = useMemo(() => findClassGroup(schoolClass), [schoolClass]);
+  const visibleParticipants = registrationType === "family" ? participants : participants.slice(0, 1);
+  const estimatedTotal = visibleParticipants.reduce((sum, participant) => sum + (registrationFeeNgn(participant.schoolClass) ?? 0), 0);
 
   /** Re-validates while the user types, but only after a failed submit. */
   const revalidate = (next: Partial<Record<string, unknown>>) => {
     if (!showErrors) return;
-    const candidate = { registrationType, participants, guardianEmail, guardianPhone, consentToEmail, ...next };
+    const nextType = (next.registrationType as "individual" | "family" | undefined) ?? registrationType;
+    const nextParticipants = (next.participants as typeof participants | undefined) ?? participants;
+    const candidate = {
+      registrationType: nextType,
+      participants: nextType === "individual" ? nextParticipants.slice(0, 1) : nextParticipants,
+      guardianEmail,
+      guardianPhone,
+      consentToEmail,
+      ...next,
+    };
     const parsed = familyRegistrationInputSchema.safeParse(candidate);
     setFormErrors(parsed.success ? {} : collectErrors(parsed.error.issues));
   };
@@ -296,26 +304,43 @@ export default function Registration() {
               <label>Registration type<select value={registrationType} onChange={event => { const value = event.target.value as "individual" | "family"; setRegistrationType(value); if (value === "individual") setParticipants(current => [current[0]]); else if (participants.length < 2) setParticipants(current => [...current, { studentName: "", schoolClass: "" }]); }}><option value="individual">Individual · one child</option><option value="family">Family · 2 to 6 children</option></select></label>
               {registrationType === "family" && <label>Number of children<select value={participants.length} onChange={event => { const count = Number(event.target.value); setParticipants(current => Array.from({ length: count }, (_, index) => current[index] ?? { studentName: "", schoolClass: "" })); }}><option value={2}>2 children</option><option value={3}>3 children</option><option value={4}>4 children</option><option value={5}>5 children</option><option value={6}>6 children</option></select></label>}
 
-              {participants.slice(0, registrationType === "family" ? participants.length : 1).map((participant, index) => (
+              {visibleParticipants.map((participant, index) => (
                 <div className="participant-fields" key={index}>
                   <h3>{registrationType === "family" ? `Child ${index + 1}` : "Participant"}</h3>
-                  <label>Student / participant full name<input value={participant.studentName} onChange={event => setParticipants(items => items.map((item, i) => i === index ? { ...item, studentName: event.target.value } : item))} placeholder="e.g. Aisha Ibrahim" autoComplete={index === 0 ? "name" : "off"} /></label>
-                  <label>School class<select value={participant.schoolClass} onChange={event => setParticipants(items => items.map((item, i) => i === index ? { ...item, schoolClass: event.target.value } : item))}><option value="">Choose a class</option>{SCHOOL_CLASSES.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+                  <label>
+                    Student / participant full name
+                    <input
+                      value={participant.studentName}
+                      onChange={event => {
+                        const next = participants.map((item, i) => i === index ? { ...item, studentName: event.target.value } : item);
+                        setParticipants(next);
+                        revalidate({ participants: next });
+                      }}
+                      placeholder="e.g. Aisha Ibrahim"
+                      autoComplete={index === 0 ? "name" : "off"}
+                      aria-invalid={Boolean(fieldError(`participants.${index}.studentName`))}
+                    />
+                    {fieldError(`participants.${index}.studentName`) && <small className="field-error">{fieldError(`participants.${index}.studentName`)}</small>}
+                  </label>
+                  <label>
+                    School class
+                    <select
+                      value={participant.schoolClass}
+                      onChange={event => {
+                        const next = participants.map((item, i) => i === index ? { ...item, schoolClass: event.target.value } : item);
+                        setParticipants(next);
+                        revalidate({ participants: next });
+                      }}
+                      aria-invalid={Boolean(fieldError(`participants.${index}.schoolClass`) || fieldError("participants"))}
+                    >
+                      <option value="">Choose a class</option>
+                      {SCHOOL_CLASSES.map(item => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                    {fieldError(`participants.${index}.schoolClass`) && <small className="field-error">{fieldError(`participants.${index}.schoolClass`)}</small>}
+                  </label>
                   {participant.schoolClass && <small className="field-hint">{findClassGroup(participant.schoolClass)} · {currentFeeLabel(registrationFeeNgn(participant.schoolClass))}</small>}
                 </div>
               ))}
-
-              <label>
-                Student / participant full name
-                <input
-                  value={studentName}
-                  onChange={event => { setStudentName(event.target.value); revalidate({ studentName: event.target.value }); }}
-                  placeholder="e.g. Aisha Ibrahim"
-                  autoComplete="name"
-                  aria-invalid={Boolean(fieldError("studentName"))}
-                />
-                {fieldError("studentName") && <small className="field-error">{fieldError("studentName")}</small>}
-              </label>
 
               <label>
                 Email address (optional)
@@ -346,7 +371,7 @@ export default function Registration() {
                 {fieldError("guardianPhone") && <small className="field-error">{fieldError("guardianPhone")}</small>}
               </label>
 
-              <div className="payment-card"><div><small>Estimated family total</small><strong>{formatNaira(participants.slice(0, registrationType === "family" ? participants.length : 1).reduce((sum, p) => sum + (registrationFeeNgn(p.schoolClass) ?? 0), 0))}</strong><em>Final quote is saved at registration and uses each class fee.</em></div></div>
+              <div className="payment-card"><div><small>{registrationType === "family" ? "Estimated family total" : "Estimated fee"}</small><strong>{formatNaira(estimatedTotal)}</strong><em>Final quote is saved at registration and uses each class fee.</em></div></div>
 
               <label className="form-check">
                 <input
@@ -414,13 +439,15 @@ export default function Registration() {
             <div className="registration-result">
               <span className="result-check"><Check size={27} /></span>
               <span className="section-label">Registration saved</span>
-              <h2>Keep this passkey<br /><em>safe.</em></h2>
-              <p>Use the family passkey for the single payment and receipt. Each child also has a separate participant ID for check-in.</p>
+              <h2>Keep this {record.familyCode ? "passkey" : "ID"}<br /><em>safe.</em></h2>
+              <p>{record.familyCode
+                ? "Use the family passkey for the single payment and receipt. Each child also has a separate participant ID for check-in."
+                : "Use this registration ID as your payment reference. Keep it — you will need it to continue later."}</p>
 
               <div className="registration-number-card">
                 <small>{record.familyCode ? "Family passkey" : "Participant registration ID"}</small>
                 <strong>{record.familyCode ?? record.registrationNumber}</strong>
-                <button onClick={copyNumber}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "Copied" : "Copy passkey"}</button>
+                <button onClick={copyNumber}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "Copied" : record.familyCode ? "Copy passkey" : "Copy ID"}</button>
               </div>
 
               {record.members?.map(member => <div className="class-group-note" key={member.registrationNumber}><span><strong>{member.studentName}</strong> · {member.schoolClass} · {member.registrationNumber} · {member.feeNgn == null ? "Fee unavailable" : formatNaira(member.feeNgn)}</span></div>)}
@@ -429,6 +456,11 @@ export default function Registration() {
                 <div className="email-status email-status--ok">
                   <Mail size={17} />
                   <span>We’ve sent your registration ID to <strong>{record.guardianEmail}</strong>. If it hasn’t arrived in a few minutes, check your spam folder.</span>
+                </div>
+              ) : record.emailStatus === "skipped" || !record.guardianEmail ? (
+                <div className="email-status email-status--ok">
+                  <ShieldCheck size={17} />
+                  <span>No confirmation email was sent. Copy the ID above and keep it safe — it is how you continue later.</span>
                 </div>
               ) : (
                 <div className="email-status email-status--warn">
@@ -470,7 +502,9 @@ export default function Registration() {
                 <>
                   <span className="section-label">Step 2 of 3 · {record.registrationNumber}</span>
                   <h2>Pay, then keep<br /><em>your ID.</em></h2>
-                  <p>Transfer the full amount using the family passkey as the reference. One receipt covers every participant in this family; our team confirms it in the dashboard.</p>
+                  <p>{record.familyCode
+                    ? "Transfer the full amount using the family passkey as the reference. One receipt covers every participant in this family; our team confirms it in the dashboard."
+                    : "Transfer the fee using the registration ID as the reference, then optionally upload a receipt screenshot."}</p>
 
                   <div className="registration-number-card">
                     <small>{record.familyCode ? "Family passkey (use as payment reference)" : "Registration ID (use as payment reference)"}</small>

@@ -3,6 +3,7 @@ import {
   GROUP_PREFIXES,
   SCHOOL_CLASSES,
   dedupeFingerprint,
+  familyRegistrationInputSchema,
   findClassGroup,
   normalizeEmail,
   normalizeName,
@@ -125,6 +126,32 @@ describe("registrationInputSchema", () => {
       expect(parsed.data.studentName).toBe("Aisha Ibrahim");
       expect(parsed.data.guardianEmail).toBe("parent@example.com");
     }
+  });
+});
+
+describe("familyRegistrationInputSchema", () => {
+  const familyValid = {
+    registrationType: "family" as const,
+    guardianPhone: "0805 778 2932",
+    guardianEmail: "",
+    consentToEmail: false,
+    participants: [
+      { studentName: "Aisha Ibrahim", schoolClass: "Basic 4" },
+      { studentName: "Yusuf Ibrahim", schoolClass: "SS 1" },
+    ],
+  };
+
+  it("accepts a two-child family without email", () => {
+    expect(familyRegistrationInputSchema.safeParse(familyValid).success).toBe(true);
+  });
+
+  it("rejects a family with one child", () => {
+    expect(familyRegistrationInputSchema.safeParse({ ...familyValid, participants: [familyValid.participants[0]] }).success).toBe(false);
+  });
+
+  it("requires email when consent is given", () => {
+    expect(familyRegistrationInputSchema.safeParse({ ...familyValid, consentToEmail: true }).success).toBe(false);
+    expect(familyRegistrationInputSchema.safeParse({ ...familyValid, consentToEmail: true, guardianEmail: "parent@example.com" }).success).toBe(true);
   });
 });
 

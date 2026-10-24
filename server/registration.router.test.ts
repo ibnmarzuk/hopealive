@@ -163,6 +163,72 @@ describe("registration.create — abuse protection", () => {
   });
 });
 
+describe("registration.createFamily", () => {
+  it("registers one child without email and skips sending", async () => {
+    const result = await caller().registration.createFamily({
+      registrationType: "individual",
+      guardianPhone: "0805 778 2932",
+      guardianEmail: "",
+      consentToEmail: false,
+      participants: [{ studentName: "Aisha Ibrahim", schoolClass: "Basic 4" }],
+    });
+    expect(result.registrationNumber).toBe("MIDDLE-001");
+    expect(result.registrationType).toBe("individual");
+    expect(result.familyCode).toBeNull();
+    expect(result.emailStatus).toBe("skipped");
+    expect(sendRegistrationEmail).not.toHaveBeenCalled();
+  });
+
+  it("sends email when a family opts in", async () => {
+    const result = await caller().registration.createFamily({
+      registrationType: "family",
+      guardianPhone: "0805 778 2932",
+      guardianEmail: "Family@Example.com",
+      consentToEmail: true,
+      participants: [
+        { studentName: "Aisha Ibrahim", schoolClass: "Basic 4" },
+        { studentName: "Yusuf Ibrahim", schoolClass: "SS 1" },
+      ],
+    });
+    expect(result.registrationType).toBe("family");
+    expect(result.familyCode).toMatch(/^HA-[0-9A-F]{8}$/);
+    expect(result.members).toHaveLength(2);
+    expect(result.members.map(member => member.registrationNumber)).toEqual(["MIDDLE-001", "ADV1-001"]);
+    expect(result.emailStatus).toBe("sent");
+    expect(sendRegistrationEmail).toHaveBeenCalledOnce();
+    expect(sendRegistrationEmail.mock.calls[0][0]).toBe("family@example.com");
+
+    const resumed = await caller().registration.resume({
+      registrationNumber: result.familyCode!,
+      guardianPhone: "08057782932",
+    });
+    expect(resumed.members).toHaveLength(2);
+    expect(resumed.feeNgn).toBe(result.feeNgn);
+  });
+
+  it("rejects a second child that matches an existing fingerprint", async () => {
+    await caller().registration.createFamily({
+      registrationType: "individual",
+      guardianPhone: "08057782932",
+      guardianEmail: "",
+      consentToEmail: false,
+      participants: [{ studentName: "Aisha Ibrahim", schoolClass: "Basic 4" }],
+    });
+    await expect(
+      caller().registration.createFamily({
+        registrationType: "family",
+        guardianPhone: "08057782932",
+        guardianEmail: "",
+        consentToEmail: false,
+        participants: [
+          { studentName: "Aisha Ibrahim", schoolClass: "Basic 4" },
+          { studentName: "Yusuf Ibrahim", schoolClass: "Basic 5" },
+        ],
+      }),
+    ).rejects.toThrow(/already registered/i);
+  });
+});
+
 describe("registration.resume", () => {
   beforeEach(async () => {
     await caller().registration.create(validInput);
