@@ -91,10 +91,11 @@ type PublicRegistrationSource = Pick<
   | "verificationStatus"
   | "receiptStatus"
   | "receiptAttempts"
-  | "familyCode"
-  | "familyPaymentLead"
   | "createdAt"
->;
+> & {
+  familyCode?: Registration["familyCode"];
+  familyPaymentLead?: Registration["familyPaymentLead"];
+};
 
 function publicReceiptMessage(row: PublicRegistrationSource): string | null {
   if (row.verificationStatus === "verified") return "Your payment has been confirmed.";
@@ -456,7 +457,7 @@ export const appRouter = router({
       }
 
       const attempts = registration.receiptAttempts + 1;
-      const receiptPatch = {
+      const receiptPatch: Partial<Registration> = {
         receiptImage: input.imageDataUrl,
         receiptSubmittedAt: new Date(),
         receiptAttempts: attempts,
