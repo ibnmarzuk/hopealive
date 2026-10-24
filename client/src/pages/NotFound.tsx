@@ -1,52 +1,58 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { AlertCircle, Home } from "lucide-react";
+import { ArrowUpRight, Compass, Home } from "lucide-react";
 import { useLocation } from "wouter";
+
+function Mark() {
+  return (
+    <span className="relative inline-flex h-12 w-12 items-center justify-center rounded-full border border-[#254033]/15 bg-[#f9f4e8] shadow-[0_12px_30px_rgba(33,53,47,0.12)]" aria-hidden="true">
+      <span className="absolute h-6 w-6 rounded-full border-[3px] border-[#254033]" />
+      <span className="absolute h-3 w-3 -translate-y-2 rounded-full bg-[#d5a25d]" />
+    </span>
+  );
+}
 
 export default function NotFound() {
   const [, setLocation] = useLocation();
 
-  const handleGoHome = () => {
-    setLocation("/");
-  };
-
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
-      <Card className="w-full max-w-lg mx-4 shadow-lg border-0 bg-white/80 backdrop-blur-sm">
-        <CardContent className="pt-8 pb-8 text-center">
-          <div className="flex justify-center mb-6">
-            <div className="relative">
-              <div className="absolute inset-0 bg-red-100 rounded-full animate-pulse" />
-              <AlertCircle className="relative h-16 w-16 text-red-500" />
-            </div>
+    <div className="min-h-screen w-full bg-[#f4efe7] px-4 py-12 text-[#21352f]">
+      <div className="mx-auto flex max-w-4xl flex-col items-center rounded-[28px] border border-[#2d453f]/10 bg-[#fffaf2]/90 p-6 shadow-[0_28px_80px_rgba(23,36,33,0.12)] backdrop-blur-sm md:p-12">
+        <div className="mb-6 flex items-center gap-3">
+          <Mark />
+          <div className="flex flex-col leading-none">
+            <span className="text-[0.72rem] font-black uppercase tracking-[0.28em] text-[#6d7d69]">hope-alive</span>
+            <span className="text-xs text-[#4a5c54]">Islamic vacation course</span>
           </div>
+        </div>
 
-          <h1 className="text-4xl font-bold text-slate-900 mb-2">404</h1>
+        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#2d453f]/10 bg-[#e7f1ea] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-[#234b3c]">
+          <Compass className="h-3.5 w-3.5" />
+          404 route not found
+        </div>
 
-          <h2 className="text-xl font-semibold text-slate-700 mb-4">
-            Page Not Found
-          </h2>
+        <h1 className="text-5xl font-black tracking-[-0.06em] md:text-7xl">Lost your way?</h1>
+        <p className="mt-4 max-w-xl text-center text-base leading-7 text-[#3a4c47] md:text-lg">
+          This page is not available right now. Head back to the main programme page or go straight to registration.
+        </p>
 
-          <p className="text-slate-600 mb-8 leading-relaxed">
-            Sorry, the page you are looking for doesn't exist.
-            <br />
-            It may have been moved or deleted.
-          </p>
-
-          <div
-            id="not-found-button-group"
-            className="flex flex-col sm:flex-row gap-3 justify-center"
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => setLocation("/")}
+            className="inline-flex items-center justify-center rounded-full bg-[#21352f] px-6 py-3 text-sm font-semibold text-[#f8f0df] transition hover:bg-[#192a26]"
           >
-            <Button
-              onClick={handleGoHome}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg"
-            >
-              <Home className="w-4 h-4 mr-2" />
-              Go Home
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            <Home className="mr-2 h-4 w-4" />
+            Go home
+          </button>
+          <button
+            type="button"
+            onClick={() => setLocation("/register")}
+            className="inline-flex items-center justify-center rounded-full border border-[#21352f]/20 bg-white px-6 py-3 text-sm font-semibold text-[#21352f] transition hover:border-[#21352f]/40 hover:bg-[#f9f4e8]"
+          >
+            Register now
+            <ArrowUpRight className="ml-2 h-4 w-4" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

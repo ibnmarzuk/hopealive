@@ -155,6 +155,14 @@ function vitePluginManusDebugCollector(): Plugin {
 function vitePluginPublicPlatformConfig(): Plugin {
   return {
     name: "manus-public-platform-config",
+    resolveId(id) {
+      if (id === "/api/platform/config.js") return id;
+      return null;
+    },
+    load(id) {
+      if (id === "/api/platform/config.js") return publicPlatformScript();
+      return null;
+    },
     configureServer(server) {
       server.middlewares.use("/api/platform/config.js", (_req, res) => {
         res.setHeader("Content-Type", "application/javascript");
