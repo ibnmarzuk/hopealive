@@ -63,6 +63,27 @@ export function registrationFeeNgn(schoolClass: string, registeredAt: Date = new
   return primaryOrBelow ? 7_500 : 8_500;
 }
 
+/** Display label for the registration pricing phase shown in admin summaries. */
+export function registrationPricingPhase(registeredAt: Date | string | null | undefined): "Early bird" | "Second phase" | "Not open" {
+  if (!registeredAt) return "Not open";
+  const date = registeredAt instanceof Date ? registeredAt : new Date(registeredAt);
+  if (Number.isNaN(date.getTime())) return "Not open";
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Lagos",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const dateMap = parts.reduce<Record<string, string>>((result, part) => {
+    if (part.type !== "literal") result[part.type] = part.value;
+    return result;
+  }, {});
+  const localDate = `${dateMap.year}-${dateMap.month}-${dateMap.day}`;
+  if (localDate < "2026-09-20") return "Not open";
+  return localDate < "2026-12-23" ? "Early bird" : "Second phase";
+}
+
 /**
  * Reduces a phone number to digits and a leading `+`.
  * Used for both storage and lookup so "0805 778 2932" and "08057782932" match.

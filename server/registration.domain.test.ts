@@ -10,6 +10,7 @@ import {
   normalizePhone,
   registrationInputSchema,
   registrationLookupSchema,
+  registrationPricingPhase,
 } from "@shared/registration";
 
 const validInput = {
@@ -166,6 +167,17 @@ describe("familyRegistrationInputSchema", () => {
     if (!parsed.success) {
       expect(parsed.error.issues.some(issue => issue.path.join(".") === "participants.0.studentName")).toBe(true);
     }
+  });
+});
+
+describe("registrationPricingPhase", () => {
+  it("labels registrations before the December switch as early bird", () => {
+    expect(registrationPricingPhase(new Date("2026-11-10T12:00:00Z")).toLowerCase()).toContain("early");
+    expect(registrationPricingPhase(new Date("2026-12-22T20:00:00Z")).toLowerCase()).toContain("early");
+  });
+
+  it("labels registrations on or after the second phase as second phase", () => {
+    expect(registrationPricingPhase(new Date("2026-12-23T00:00:00Z")).toLowerCase()).toContain("second");
   });
 });
 

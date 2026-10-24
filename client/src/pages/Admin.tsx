@@ -4,7 +4,7 @@ import { TRPCClientError } from "@trpc/client";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from "@shared/const";
-import { PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, type PaymentStatus } from "@shared/registration";
+import { PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, registrationPricingPhase, type PaymentStatus } from "@shared/registration";
 import { trpc } from "@/lib/trpc";
 import { friendlyErrorMessage } from "@/lib/errors";
 import type { AppRouter } from "../../../server/routers";
@@ -50,6 +50,13 @@ function paymentSummary(row: AdminRow): { label: string; tone: string } {
   return { label: "Pending", tone: "none" };
 }
 
+function paymentActionClassName(tone: string): string {
+  if (tone === "verified") return "payment-button payment-button--verified";
+  if (tone === "needs_review") return "payment-button payment-button--review";
+  if (tone === "rejected") return "payment-button payment-button--rejected";
+  return "payment-button payment-button--pending";
+}
+
 /** Detail view for one registration: all fields, evidence, and manual controls. */
 function RegistrationDialog({ row, onClose, onDecision, deciding, familyRows }: { row: AdminRow; onClose: () => void; onDecision: (status: PaymentStatus, actualAmountNgn?: number) => void; deciding: boolean; familyRows: AdminRow[] }) {
   const hasReceipt = row.receiptStatus === "submitted" && (!row.familyCode || row.familyPaymentLead);
@@ -90,6 +97,7 @@ function RegistrationDialog({ row, onClose, onDecision, deciding, familyRows }: 
               <dt>Payment status</dt><dd>{PAYMENT_STATUS_LABELS[row.paymentStatus as PaymentStatus] ?? row.paymentStatus}</dd>
               {row.familyCode && <><dt>Family expected total</dt><dd>₦{familyTotal.toLocaleString("en-NG")}</dd>{row.familyPaymentLead && row.verifiedAmountNgn != null && <><dt>Amount confirmed</dt><dd>₦{row.verifiedAmountNgn.toLocaleString("en-NG")}</dd></>}</>}
               <dt>Registered</dt><dd>{formatDate(row.createdAt)}</dd>
+              <dt>Pricing phase</dt><dd><span className={`pricing-tag pricing-tag--${registrationPricingPhase(row.createdAt) === "Early bird" ? "early" : registrationPricingPhase(row.createdAt) === "Second phase" ? "second" : "none"}`}>{registrationPricingPhase(row.createdAt)}</span></dd>
               {hasReceipt && <><dt>Evidence sent</dt><dd>{formatDate(row.receiptSubmittedAt)} {row.receiptAttempts > 1 ? `(${row.receiptAttempts} uploads)` : ""}</dd></>}
               {row.verifiedAt && <><dt>Confirmed</dt><dd>{formatDate(row.verifiedAt)} {row.verifiedBy ? `(${row.verifiedBy})` : ""}</dd></>}
             </dl>
@@ -117,6 +125,7 @@ function RegistrationDialog({ row, onClose, onDecision, deciding, familyRows }: 
 
 export default function Admin() {
   const [search, setSearch] = useState("");
+  const [phaseFilter, setPhaseFilter] = useState<"all" | "early" | "second">("all");
   const [openId, setOpenId] = useState<number | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -160,12 +169,25 @@ export default function Admin() {
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase().trim();
-    if (!query) return rows;
-    return rows.filter(item =>
-      [item.studentName, item.registrationNumber, item.familyCode, item.schoolClass, item.classGroup, item.guardianPhone, item.guardianEmail]
-        .some(value => typeof value === "string" && value.toLowerCase().includes(query)),
-    );
-  }, [rows, search]);
+    return rows.filter(item => {
+      const matchesSearch = !query || [
+        item.studentName,
+        item.registrationNumber,
+        item.familyCode,
+        item.schoolClass,
+        item.classGroup,
+        item.guardianPhone,
+        item.guardianEmail,
+      ].some(value => typeof value === "string" && value.toLowerCase().includes(query));
+
+      if (!matchesSearch) return false;
+
+      const phase = registrationPricingPhase(item.createdAt);
+      if (phaseFilter === "early") return phase === "Early bird";
+      if (phaseFilter === "second") return phase === "Second phase";
+      return true;
+    });
+  }, [phaseFilter, rows, search]);
 
   const openRow = openId == null ? null : rows.find(row => row.id === openId) ?? null;
 
@@ -223,6 +245,15 @@ export default function Admin() {
   if (data && !data.groupLinkConfigured) warnings.push("WHATSAPP_GROUP_URL is not set; confirmed families will not receive a group link.");
 
   const awaitingReview = rows.filter(row => row.receiptStatus === "submitted" && row.verificationStatus !== "verified" && row.verificationStatus !== "rejected" && (!row.familyCode || row.familyPaymentLead)).length;
+  const phaseCounts = useMemo(() => {
+    const counts = { early: 0, second: 0 };
+    for (const row of rows) {
+      const phase = registrationPricingPhase(row.createdAt);
+      if (phase === "Early bird") counts.early += 1;
+      else if (phase === "Second phase") counts.second += 1;
+    }
+    return counts;
+  }, [rows]);
 
   return (
     <div className="admin-page">
@@ -243,6 +274,8 @@ export default function Admin() {
           </div>
           <div className="admin-summary">
             <span><strong>{rows.length}</strong><small>Total registrations</small></span>
+            <span><strong>{phaseCounts.early}</strong><small>Early bird</small></span>
+            <span><strong>{phaseCounts.second}</strong><small>Second phase</small></span>
             <span><strong>₦{(data?.confirmedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Amount confirmed</small></span>
             <span><strong>₦{(data?.pendingExpectedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Expected, pending</small></span>
             <span><strong>{awaitingReview}</strong><small>Evidence to review</small></span>
@@ -256,7 +289,17 @@ export default function Admin() {
 
         <div className="admin-toolbar">
           <label><Search size={17} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by registration ID, name, email or phone" /></label>
-          <span>{filtered.length} shown</span>
+          <div className="admin-toolbar__filters">
+            <label className="admin-filter">
+              <span>Phase</span>
+              <select value={phaseFilter} onChange={event => setPhaseFilter(event.target.value as "all" | "early" | "second")}>
+                <option value="all">All</option>
+                <option value="early">Early bird</option>
+                <option value="second">Second phase</option>
+              </select>
+            </label>
+            <span>{filtered.length} shown</span>
+          </div>
         </div>
 
         <div className="admin-table-wrap">
@@ -288,7 +331,10 @@ export default function Admin() {
                     <td>
                       <span className={`receipt-pill receipt-pill--${payment.tone}`}>{payment.label}</span>
                       {item.feeNgn != null && <small>Expected: ₦{item.feeNgn.toLocaleString("en-NG")}</small>}
-                      <button className="plain-action plain-action--inline" type="button" onClick={() => setOpenId(item.id)}>
+                      <small className={`pricing-tag pricing-tag--${registrationPricingPhase(item.createdAt) === "Early bird" ? "early" : registrationPricingPhase(item.createdAt) === "Second phase" ? "second" : "none"}`}>
+                        {registrationPricingPhase(item.createdAt)}
+                      </small>
+                      <button className={paymentActionClassName(payment.tone)} type="button" onClick={() => setOpenId(item.id)}>
                         View details{item.receiptStatus === "submitted" ? " & evidence" : ""}
                       </button>
                     </td>
