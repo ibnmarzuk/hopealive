@@ -26,7 +26,7 @@ export class DuplicateRegistrationError extends Error {
 
 export type CreateRegistrationData = {
   studentName: string;
-  guardianEmail: string;
+  guardianEmail: string | null;
   guardianPhone: string;
   schoolClass: string;
   classGroup: string;
@@ -35,6 +35,8 @@ export type CreateRegistrationData = {
   dedupeKey: string;
   emailStatus: EmailStatus;
 };
+
+export type CreateFamilyRegistrationData = CreateRegistrationData & { familyCode: string; familyPaymentLead: boolean; createdAt: Date };
 
 /** Columns the admin list needs — everything except the heavy receipt image. */
 export type AdminListRow = Pick<
@@ -46,6 +48,9 @@ export type AdminListRow = Pick<
   | "schoolClass"
   | "classGroup"
   | "registrationNumber"
+  | "familyCode"
+  | "familyPaymentLead"
+  | "verifiedAmountNgn"
   | "paymentStatus"
   | "receiptStatus"
   | "verificationStatus"
@@ -65,12 +70,15 @@ export interface RegistrationStore {
   findByDedupeKey(dedupeKey: string): Promise<Pick<Registration, "registrationNumber"> | null>;
   /** Atomically allocates the next number for the class group and inserts the row. */
   create(data: CreateRegistrationData): Promise<string>;
+  createFamily(data: CreateFamilyRegistrationData[]): Promise<string[]>;
   findByNumber(registrationNumber: string): Promise<Registration | null>;
   findById(id: number): Promise<Registration | null>;
+  findByFamilyCode(familyCode: string): Promise<Registration[]>;
   listForAdmin(): Promise<AdminListRow[]>;
   getReceiptImage(id: number): Promise<ReceiptImageRow | null>;
   updateByNumber(registrationNumber: string, patch: Partial<Registration>): Promise<void>;
   updateById(id: number, patch: Partial<Registration>): Promise<void>;
+  updateByFamilyCode(familyCode: string, patch: Partial<Registration>): Promise<void>;
 }
 
 const ADMIN_COLUMNS = {
@@ -81,6 +89,9 @@ const ADMIN_COLUMNS = {
   schoolClass: registrations.schoolClass,
   classGroup: registrations.classGroup,
   registrationNumber: registrations.registrationNumber,
+  familyCode: registrations.familyCode,
+  familyPaymentLead: registrations.familyPaymentLead,
+  verifiedAmountNgn: registrations.verifiedAmountNgn,
   paymentStatus: registrations.paymentStatus,
   receiptStatus: registrations.receiptStatus,
   verificationStatus: registrations.verificationStatus,
@@ -146,6 +157,48 @@ class PostgresStore implements RegistrationStore {
     }
   }
 
+  async createFamily(data: CreateFamilyRegistrationData[]): Promise<string[]> {
+    try {
+      return await this.db.transaction(async tx => {
+        const nextNumbers: Record<string, number> = {};
+        for (const classGroup of [...new Set(data.map(item => item.classGroup))].sort()) {
+          await tx.insert(registrationCounters).values({ classGroup, lastNumber: 0 }).onConflictDoNothing({ target: registrationCounters.classGroup });
+          const [counter] = await tx.select({ lastNumber: registrationCounters.lastNumber })
+            .from(registrationCounters)
+            .where(eq(registrationCounters.classGroup, classGroup))
+            .for("update");
+          nextNumbers[classGroup] = Number(counter?.lastNumber ?? 0);
+        }
+
+        const numbered = data.map(item => {
+          const next = ++nextNumbers[item.classGroup];
+          return { ...item, registrationNumber: `${item.prefix}-${String(next).padStart(3, "0")}` };
+        });
+        for (const [classGroup, lastNumber] of Object.entries(nextNumbers)) {
+          await tx.update(registrationCounters).set({ lastNumber }).where(eq(registrationCounters.classGroup, classGroup));
+        }
+        await tx.insert(registrations).values(numbered.map(item => ({
+          studentName: item.studentName,
+          guardianEmail: item.guardianEmail,
+          guardianPhone: item.guardianPhone,
+          schoolClass: item.schoolClass,
+          classGroup: item.classGroup,
+          registrationNumber: item.registrationNumber,
+          dedupeKey: item.dedupeKey,
+          emailStatus: item.emailStatus,
+          familyCode: item.familyCode,
+          familyPaymentLead: item.familyPaymentLead,
+          createdAt: item.createdAt,
+          updatedAt: item.createdAt,
+        })));
+        return numbered.map(item => item.registrationNumber);
+      });
+    } catch (error) {
+      if (isDuplicateKeyError(error)) throw new DuplicateRegistrationError();
+      throw error;
+    }
+  }
+
   async findByNumber(registrationNumber: string) {
     const rows = await this.db.select().from(registrations).where(eq(registrations.registrationNumber, registrationNumber)).limit(1);
     return rows[0] ?? null;
@@ -154,6 +207,10 @@ class PostgresStore implements RegistrationStore {
   async findById(id: number) {
     const rows = await this.db.select().from(registrations).where(eq(registrations.id, id)).limit(1);
     return rows[0] ?? null;
+  }
+
+  async findByFamilyCode(familyCode: string) {
+    return this.db.select().from(registrations).where(eq(registrations.familyCode, familyCode)).orderBy(registrations.id);
   }
 
   async listForAdmin() {
@@ -175,6 +232,10 @@ class PostgresStore implements RegistrationStore {
 
   async updateById(id: number, patch: Partial<Registration>) {
     await this.db.update(registrations).set(patch).where(eq(registrations.id, id));
+  }
+
+  async updateByFamilyCode(familyCode: string, patch: Partial<Registration>) {
+    await this.db.update(registrations).set(patch).where(eq(registrations.familyCode, familyCode));
   }
 }
 
@@ -259,6 +320,9 @@ class MemoryStore implements RegistrationStore {
       classGroup: data.classGroup,
       registrationNumber,
       dedupeKey: data.dedupeKey,
+      familyCode: null,
+      familyPaymentLead: false,
+      verifiedAmountNgn: null,
       paymentStatus: "pending_payment",
       receiptStatus: "not_submitted",
       verificationStatus: "pending",
@@ -281,6 +345,50 @@ class MemoryStore implements RegistrationStore {
     return registrationNumber;
   }
 
+  async createFamily(data: CreateFamilyRegistrationData[]): Promise<string[]> {
+    const dedupeKeys = data.map(item => item.dedupeKey);
+    if (new Set(dedupeKeys).size !== dedupeKeys.length || dedupeKeys.some(key => this.state.registrations.some(r => r.dedupeKey === key))) {
+      throw new DuplicateRegistrationError();
+    }
+    const numbers = data.map(item => {
+      const next = (this.state.counters[item.classGroup] ?? 0) + 1;
+      this.state.counters[item.classGroup] = next;
+      return `${item.prefix}-${String(next).padStart(3, "0")}`;
+    });
+    const records = data.map((item, index): Registration => ({
+      id: this.state.nextId++,
+      studentName: item.studentName,
+      guardianEmail: item.guardianEmail,
+      guardianPhone: item.guardianPhone,
+      schoolClass: item.schoolClass,
+      classGroup: item.classGroup,
+      registrationNumber: numbers[index],
+      dedupeKey: item.dedupeKey,
+      familyCode: item.familyCode,
+      familyPaymentLead: item.familyPaymentLead,
+      verifiedAmountNgn: null,
+      paymentStatus: "pending_payment",
+      receiptStatus: "not_submitted",
+      verificationStatus: "pending",
+      emailStatus: item.emailStatus,
+      emailMessageId: null,
+      emailSentAt: null,
+      emailError: null,
+      receiptImage: null,
+      receiptSubmittedAt: null,
+      receiptAttempts: 0,
+      receiptAnalysis: null,
+      verifiedAt: null,
+      verifiedBy: null,
+      notes: null,
+      createdAt: item.createdAt,
+      updatedAt: item.createdAt,
+    }));
+    this.state.registrations.push(...records);
+    this.persist();
+    return numbers;
+  }
+
   async findByNumber(registrationNumber: string) {
     const found = this.state.registrations.find(r => r.registrationNumber === registrationNumber);
     return found ? this.clone(found) : null;
@@ -289,6 +397,10 @@ class MemoryStore implements RegistrationStore {
   async findById(id: number) {
     const found = this.state.registrations.find(r => r.id === id);
     return found ? this.clone(found) : null;
+  }
+
+  async findByFamilyCode(familyCode: string) {
+    return this.state.registrations.filter(record => record.familyCode === familyCode).sort((a, b) => a.id - b.id).map(record => this.clone(record));
   }
 
   async listForAdmin(): Promise<AdminListRow[]> {
@@ -324,6 +436,13 @@ class MemoryStore implements RegistrationStore {
       this.apply(record, patch);
       this.persist();
     }
+  }
+
+  async updateByFamilyCode(familyCode: string, patch: Partial<Registration>) {
+    const family = this.state.registrations.filter(record => record.familyCode === familyCode);
+    if (!family.length) return;
+    family.forEach(record => this.apply(record, patch));
+    this.persist();
   }
 }
 

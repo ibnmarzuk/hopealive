@@ -124,6 +124,32 @@ export const registrationInputSchema = z.object({
 
 export type RegistrationInput = z.infer<typeof registrationInputSchema>;
 
+export const familyRegistrationInputSchema = z.object({
+  registrationType: z.enum(["individual", "family"]),
+  guardianPhone: phoneSchema,
+  guardianEmail: z.string().trim().max(320, "That email address is too long.").optional().or(z.literal("")),
+  consentToEmail: z.boolean(),
+  participants: z.array(z.object({
+    studentName: z.string().trim().min(2, "Enter the participant's full name.").max(160, "That name is too long.").refine(value => /\p{L}/u.test(value), "Enter the participant's full name."),
+    schoolClass: z.string().trim().refine(value => findClassGroup(value) !== null, "Choose a class from the list."),
+  })).min(1).max(6),
+}).superRefine((value, ctx) => {
+  if (value.registrationType === "individual" && value.participants.length !== 1) {
+    ctx.addIssue({ code: "custom", path: ["participants"], message: "Individual registration is for one participant." });
+  }
+  if (value.registrationType === "family" && value.participants.length < 2) {
+    ctx.addIssue({ code: "custom", path: ["participants"], message: "Family registration needs at least two participants." });
+  }
+  if (value.guardianEmail && !z.email().safeParse(value.guardianEmail).success) {
+    ctx.addIssue({ code: "custom", path: ["guardianEmail"], message: "Enter a valid email address." });
+  }
+  if (value.consentToEmail && !value.guardianEmail) {
+    ctx.addIssue({ code: "custom", path: ["guardianEmail"], message: "Enter an email address to receive email updates." });
+  }
+});
+
+export type FamilyRegistrationInput = z.infer<typeof familyRegistrationInputSchema>;
+
 /** Validation for looking up an existing registration. */
 export const registrationLookupSchema = z.object({
   registrationNumber: z

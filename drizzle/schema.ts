@@ -1,6 +1,7 @@
 import {
   integer,
   jsonb,
+  boolean,
   pgEnum,
   pgTable,
   serial,
@@ -46,6 +47,11 @@ export const registrations = pgTable("registrations", {
   classGroup: varchar("classGroup", { length: 32 }).notNull(),
   registrationNumber: varchar("registrationNumber", { length: 32 }).notNull().unique(),
   dedupeKey: varchar("dedupeKey", { length: 64 }).unique(),
+  /** Shared family passkey for participants registered and paid together. */
+  familyCode: varchar("familyCode", { length: 16 }),
+  familyPaymentLead: boolean("familyPaymentLead").notNull().default(false),
+  /** Actual bank-confirmed amount, recorded once on the family's lead row. */
+  verifiedAmountNgn: integer("verifiedAmountNgn"),
   paymentStatus: paymentStatus("paymentStatus").notNull().default("pending_payment"),
   receiptStatus: receiptStatus("receiptStatus").notNull().default("not_submitted"),
   verificationStatus: verificationStatus("verificationStatus").notNull().default("pending"),

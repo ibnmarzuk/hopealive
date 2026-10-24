@@ -12,10 +12,11 @@ import {
   registrationInputSchema,
   registrationLookupSchema,
   registrationFeeNgn,
+  familyRegistrationInputSchema,
   type ClassGroup,
 } from "@shared/registration";
 import { TRPCError } from "@trpc/server";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Registration } from "../drizzle/schema";
 import { DuplicateRegistrationError, getStore } from "./registrationStore";
@@ -90,6 +91,8 @@ type PublicRegistrationSource = Pick<
   | "verificationStatus"
   | "receiptStatus"
   | "receiptAttempts"
+  | "familyCode"
+  | "familyPaymentLead"
   | "createdAt"
 >;
 
@@ -108,6 +111,7 @@ function toPublicRegistration(row: PublicRegistrationSource) {
   const verified = row.verificationStatus === "verified";
   return {
     registrationNumber: row.registrationNumber,
+    familyCode: row.familyCode,
     studentName: row.studentName,
     guardianEmail: row.guardianEmail,
     guardianPhone: row.guardianPhone,
@@ -292,9 +296,61 @@ export const appRouter = router({
       };
     }),
 
+    createFamily: publicProcedure.input(familyRegistrationInputSchema).mutation(async ({ input, ctx }) => {
+      const ip = clientIp(ctx.req);
+      const limited = hitRateLimit(`register:ip:${ip}`, RATE_LIMITS.ip.limit, RATE_LIMITS.ip.windowMs);
+      if (!limited.allowed) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Too many registration attempts. Please try again shortly." });
+      const phone = normalizePhone(input.guardianPhone);
+      const email = input.consentToEmail && input.guardianEmail ? normalizeEmail(input.guardianEmail) : null;
+      const store = await getStore();
+      const createdAt = new Date();
+      if (input.registrationType === "individual") {
+        const participant = input.participants[0];
+        const studentName = participant.studentName.trim().replace(/\s+/g, " ");
+        const classGroup = requireClassGroup(participant.schoolClass);
+        const dedupeKey = fingerprintHash({ studentName, guardianPhone: phone, schoolClass: participant.schoolClass });
+        if (await store.findByDedupeKey(dedupeKey)) throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+        let registrationNumber: string;
+        try { registrationNumber = await store.create({ studentName, guardianEmail: email, guardianPhone: phone, schoolClass: participant.schoolClass, classGroup, prefix: GROUP_PREFIXES[classGroup], dedupeKey, emailStatus: email && isEmailConfigured() ? "pending" : "skipped" }); }
+        catch (error) { if (error instanceof DuplicateRegistrationError) throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE }); throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "We could not save this registration. Please try again." }); }
+        return { ...toPublicRegistration({ registrationNumber, studentName, guardianEmail: email, guardianPhone: phone, schoolClass: participant.schoolClass, classGroup, paymentStatus: "pending_payment" as const, verificationStatus: "pending" as const, receiptStatus: "not_submitted" as const, receiptAttempts: 0, createdAt }), registrationType: "individual", members: [{ registrationNumber, studentName, schoolClass: participant.schoolClass, classGroup, feeNgn: registrationFeeNgn(participant.schoolClass, createdAt) }], emailStatus: email && isEmailConfigured() ? "pending" : "skipped" };
+      }
+      const familyCode = `HA-${randomBytes(4).toString("hex").toUpperCase()}`;
+      const participants = input.participants.map((p, index) => {
+        const studentName = p.studentName.trim().replace(/\s+/g, " ");
+        const classGroup = requireClassGroup(p.schoolClass);
+        return { studentName, guardianEmail: email, guardianPhone: phone, schoolClass: p.schoolClass, classGroup, prefix: GROUP_PREFIXES[classGroup], dedupeKey: fingerprintHash({ studentName, guardianPhone: phone, schoolClass: p.schoolClass }), emailStatus: email && isEmailConfigured() ? "pending" as const : "skipped" as const, familyCode, familyPaymentLead: index === 0, createdAt };
+      });
+      const keys = participants.map(p => p.dedupeKey);
+      if (new Set(keys).size !== keys.length || (await Promise.all(keys.map(key => store.findByDedupeKey(key)))).some(Boolean)) throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+      let numbers: string[];
+      try { numbers = await store.createFamily(participants); }
+      catch (error) { if (error instanceof DuplicateRegistrationError) throw new TRPCError({ code: "CONFLICT", message: DUPLICATE_MESSAGE }); throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "We could not save this family registration. Please try again." }); }
+      const members = participants.map((p, i) => ({ registrationNumber: numbers[i], studentName: p.studentName, schoolClass: p.schoolClass, classGroup: p.classGroup, feeNgn: registrationFeeNgn(p.schoolClass, createdAt) }));
+      const total = members.reduce((sum, member) => sum + (member.feeNgn ?? 0), 0);
+      const first = participants[0];
+      const result = { ...toPublicRegistration({ registrationNumber: numbers[0], studentName: first.studentName, guardianEmail: email, guardianPhone: phone, schoolClass: first.schoolClass, classGroup: first.classGroup, paymentStatus: "pending_payment" as const, verificationStatus: "pending" as const, receiptStatus: "not_submitted" as const, receiptAttempts: 0, createdAt }), registrationNumber: numbers[0], studentName: input.registrationType === "family" ? `${members.length} participants` : first.studentName, familyCode, registrationType: input.registrationType, members, feeNgn: total, emailStatus: email && isEmailConfigured() ? "pending" : "skipped" };
+      if (email && isEmailConfigured()) {
+        const sent = await sendRegistrationEmail(email, { studentName: result.studentName, registrationNumber: familyCode, schoolClass: members.map(m => m.schoolClass).join(", "), classGroup: "Family", guardianPhone: phone, feeNgn: total, appUrl: ENV.appUrl });
+        await store.updateByFamilyCode(familyCode, sent.status === "sent" ? { emailStatus: "sent", emailMessageId: sent.messageId, emailSentAt: new Date(), emailError: null } : { emailStatus: sent.status, emailError: sent.reason.slice(0, 255) });
+        result.emailStatus = sent.status;
+      }
+      return result;
+    }),
+
     resume: publicProcedure.input(registrationLookupSchema).query(async ({ input }) => {
       const store = await getStore();
-      const registration = await store.findByNumber(input.registrationNumber.toUpperCase());
+      if (input.registrationNumber.toUpperCase().startsWith("HA-")) {
+        const family = await store.findByFamilyCode(input.registrationNumber.toUpperCase());
+        if (!family.length || family[0].guardianPhone !== normalizePhone(input.guardianPhone)) throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
+        const lead = family.find(row => row.familyPaymentLead) ?? family[0];
+        const members = family.map(row => ({ registrationNumber: row.registrationNumber, studentName: row.studentName, schoolClass: row.schoolClass, classGroup: row.classGroup, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) }));
+        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: family.length > 1 ? "family" : "individual", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: family.every(row => row.verificationStatus === "verified") ? "verified" as const : lead.verificationStatus, receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
+      }
+      const lookupNumber = input.registrationNumber.toUpperCase();
+      const registration = lookupNumber.startsWith("HA-")
+        ? (await store.findByFamilyCode(lookupNumber)).find(row => row.familyPaymentLead) ?? null
+        : await store.findByNumber(lookupNumber);
       if (!registration || registration.guardianPhone !== normalizePhone(input.guardianPhone)) {
         throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
       }
@@ -318,7 +374,10 @@ export const appRouter = router({
 
       const store = await getStore();
       const phone = normalizePhone(input.guardianPhone);
-      const registration = await store.findByNumber(input.registrationNumber.toUpperCase());
+      const lookupNumber = input.registrationNumber.toUpperCase();
+      const registration = lookupNumber.startsWith("HA-")
+        ? (await store.findByFamilyCode(lookupNumber)).find(row => row.familyPaymentLead) ?? null
+        : await store.findByNumber(lookupNumber);
       if (!registration || registration.guardianPhone !== phone) {
         throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
       }
@@ -336,7 +395,7 @@ export const appRouter = router({
       }
 
       const attempts = registration.receiptAttempts + 1;
-      await store.updateById(registration.id, {
+      const receiptPatch = {
         receiptImage: input.imageDataUrl,
         receiptSubmittedAt: new Date(),
         receiptAttempts: attempts,
@@ -344,8 +403,12 @@ export const appRouter = router({
         // Awaiting a human: "claimed" by the registrant, pending verification.
         paymentStatus: "payment_claimed",
         verificationStatus: "pending",
-      });
+      };
+      if (registration.familyCode) await store.updateByFamilyCode(registration.familyCode, { ...receiptPatch, receiptImage: null });
+      await store.updateById(registration.id, receiptPatch);
 
+      const family = registration.familyCode ? await store.findByFamilyCode(registration.familyCode) : [];
+      const members = family.map(row => ({ registrationNumber: row.registrationNumber, studentName: row.studentName, schoolClass: row.schoolClass, classGroup: row.classGroup, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) }));
       return {
         outcome: "submitted" as const,
         ...toPublicRegistration({
@@ -355,14 +418,19 @@ export const appRouter = router({
           receiptStatus: "submitted",
           receiptAttempts: attempts,
         }),
+        ...(family.length ? { members, studentName: `${family.length} participants`, feeNgn: members.reduce((sum, item) => sum + (item.feeNgn ?? 0), 0) } : {}),
       };
     }),
 
     adminList: adminProcedure.query(async () => {
       const store = await getStore();
       const rows = await store.listForAdmin();
+      const confirmedAmountNgn = rows.reduce((sum, row) => sum + (row.familyCode ? (row.familyPaymentLead ? row.verifiedAmountNgn ?? 0 : 0) : row.verificationStatus === "verified" ? registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0 : 0), 0);
+      const pendingExpectedAmountNgn = rows.reduce((sum, row) => sum + (row.verificationStatus === "verified" ? 0 : registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0);
       return {
         rows: rows.map(row => ({ ...row, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) })),
+        confirmedAmountNgn,
+        pendingExpectedAmountNgn,
         emailConfigured: isEmailConfigured(),
         emailProblem: emailConfigurationProblem(),
         groupLinkConfigured: Boolean(ENV.whatsappGroupUrl),
@@ -383,7 +451,7 @@ export const appRouter = router({
      * email. The "first time" guard prevents duplicate confirmation emails.
      */
     adminUpdateStatus: adminProcedure
-      .input(z.object({ id: z.number().int().positive(), paymentStatus: z.enum(PAYMENT_STATUSES) }))
+      .input(z.object({ id: z.number().int().positive(), paymentStatus: z.enum(PAYMENT_STATUSES), actualAmountNgn: z.number().int().positive().optional() }))
       .mutation(async ({ input }) => {
         const store = await getStore();
         const registration = await store.findById(input.id);
@@ -399,11 +467,25 @@ export const appRouter = router({
                 : "pending";
         const becomingVerified = verificationStatus === "verified" && registration.verificationStatus !== "verified";
 
-        await store.updateById(input.id, {
+        const patch: Partial<Registration> = {
           paymentStatus: input.paymentStatus,
           verificationStatus,
           ...(becomingVerified ? { verifiedAt: new Date(), verifiedBy: "admin" as const } : {}),
-        });
+        };
+        if (registration.familyCode) {
+          const family = await store.findByFamilyCode(registration.familyCode);
+          if (becomingVerified) {
+            const expected = family.reduce((sum, row) => sum + (registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0);
+            const actual = input.actualAmountNgn;
+            if (!actual) throw new TRPCError({ code: "BAD_REQUEST", message: `Enter the bank-confirmed amount for this family. Expected total: ₦${expected.toLocaleString("en-NG")}.` });
+            if (actual !== expected) throw new TRPCError({ code: "BAD_REQUEST", message: `The entered amount does not match the family total of ₦${expected.toLocaleString("en-NG")}. Leave the family pending and investigate the difference.` });
+            await store.updateByFamilyCode(registration.familyCode, { ...patch, verifiedAmountNgn: null });
+            const lead = family.find(row => row.familyPaymentLead) ?? family[0];
+            await store.updateById(lead.id, { verifiedAmountNgn: actual });
+          } else await store.updateByFamilyCode(registration.familyCode, patch);
+        } else {
+          await store.updateById(input.id, { ...patch, ...(becomingVerified ? { verifiedAmountNgn: input.actualAmountNgn ?? registrationFeeNgn(registration.schoolClass, registration.createdAt) } : {}) });
+        }
 
         if (becomingVerified) await notifyPaymentVerified(registration);
 

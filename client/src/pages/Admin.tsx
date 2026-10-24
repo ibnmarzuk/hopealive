@@ -40,9 +40,11 @@ function paymentSummary(row: AdminRow): { label: string; tone: string } {
 }
 
 /** Detail view for one registration: all fields, evidence, and manual controls. */
-function RegistrationDialog({ row, onClose, onDecision, deciding }: { row: AdminRow; onClose: () => void; onDecision: (status: PaymentStatus) => void; deciding: boolean }) {
-  const hasReceipt = row.receiptStatus === "submitted";
-  const image = trpc.registration.adminReceiptImage.useQuery({ id: row.id }, { enabled: hasReceipt });
+function RegistrationDialog({ row, onClose, onDecision, deciding, familyRows }: { row: AdminRow; onClose: () => void; onDecision: (status: PaymentStatus, actualAmountNgn?: number) => void; deciding: boolean; familyRows: AdminRow[] }) {
+  const hasReceipt = row.receiptStatus === "submitted" && (!row.familyCode || row.familyPaymentLead);
+  const imageId = row.familyCode ? familyRows.find(member => member.familyPaymentLead)?.id ?? row.id : row.id;
+  const image = trpc.registration.adminReceiptImage.useQuery({ id: imageId }, { enabled: hasReceipt });
+  const familyTotal = row.familyCode ? familyRows.reduce((sum, member) => sum + (member.feeNgn ?? 0), 0) : row.feeNgn ?? 0;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) onClose(); }}>
@@ -69,21 +71,24 @@ function RegistrationDialog({ row, onClose, onDecision, deciding }: { row: Admin
             <span className={`receipt-pill receipt-pill--${paymentSummary(row).tone}`}>{paymentSummary(row).label}</span>
             <dl>
               <dt>Registration ID</dt><dd><code>{row.registrationNumber}</code></dd>
+              {row.familyCode && <><dt>Family passkey</dt><dd><code>{row.familyCode}</code></dd><dt>Family size</dt><dd>{familyRows.length} participants</dd></>}
               <dt>Full name</dt><dd>{row.studentName}</dd>
               <dt>Email</dt><dd>{row.guardianEmail ?? "—"}</dd>
               <dt>Phone</dt><dd>{row.guardianPhone}</dd>
               <dt>Class</dt><dd>{row.schoolClass} · {row.classGroup}</dd>
               <dt>Payment status</dt><dd>{PAYMENT_STATUS_LABELS[row.paymentStatus as PaymentStatus] ?? row.paymentStatus}</dd>
+              {row.familyCode && <><dt>Family expected total</dt><dd>₦{familyTotal.toLocaleString("en-NG")}</dd>{row.familyPaymentLead && row.verifiedAmountNgn != null && <><dt>Amount confirmed</dt><dd>₦{row.verifiedAmountNgn.toLocaleString("en-NG")}</dd></>}</>}
               <dt>Registered</dt><dd>{formatDate(row.createdAt)}</dd>
               {hasReceipt && <><dt>Evidence sent</dt><dd>{formatDate(row.receiptSubmittedAt)} {row.receiptAttempts > 1 ? `(${row.receiptAttempts} uploads)` : ""}</dd></>}
               {row.verifiedAt && <><dt>Confirmed</dt><dd>{formatDate(row.verifiedAt)} {row.verifiedBy ? `(${row.verifiedBy})` : ""}</dd></>}
             </dl>
+            {row.familyCode && <div className="class-group-note">{familyRows.map(member => <div key={member.id}>{member.studentName} · {member.schoolClass} · {member.registrationNumber} · ₦{(member.feeNgn ?? 0).toLocaleString("en-NG")}</div>)}</div>}
 
-            <p className="receipt-dialog__reasoning">Confirm only after checking the payment reached {row.guardianPhone ? "the account" : "the account"}. Confirming sends the participant their group link by email.</p>
+            <p className="receipt-dialog__reasoning">Confirm only after checking the bank account. Family registrations share one payment status and one receipt record.</p>
 
             <div className="receipt-dialog__actions">
               {row.verificationStatus !== "verified" && (
-                <button className="button button--ink" type="button" disabled={deciding} onClick={() => onDecision("verified")}><Check size={16} /> Confirm payment</button>
+                <button className="button button--ink" type="button" disabled={deciding} onClick={() => { const value = window.prompt(`Enter the amount confirmed in the bank account (expected ₦${familyTotal.toLocaleString("en-NG")}).`, String(familyTotal)); if (value === null) return; const amount = Number(value.replace(/[₦,\s]/g, "")); if (!Number.isSafeInteger(amount) || amount <= 0) { toast.error("Enter a valid amount in naira."); return; } onDecision("verified", amount); }}><Check size={16} /> Confirm payment</button>
               )}
               {row.verificationStatus !== "rejected" && (
                 <button className="button button--outline" type="button" disabled={deciding} onClick={() => onDecision("rejected")}><X size={16} /> Reject</button>
@@ -227,7 +232,8 @@ export default function Admin() {
           </div>
           <div className="admin-summary">
             <span><strong>{rows.length}</strong><small>Total registrations</small></span>
-            <span><strong>{rows.filter(item => item.verificationStatus === "verified").length}</strong><small>Confirmed</small></span>
+            <span><strong>₦{(data?.confirmedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Amount confirmed</small></span>
+            <span><strong>₦{(data?.pendingExpectedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Expected, pending</small></span>
             <span><strong>{awaitingReview}</strong><small>Evidence to review</small></span>
             <span><strong>{rows.filter(item => item.emailStatus === "failed").length}</strong><small>Email failures</small></span>
           </div>
@@ -257,7 +263,7 @@ export default function Admin() {
                       <small>{item.schoolClass}</small>
                     </td>
                     <td>{item.classGroup}</td>
-                    <td><code>{item.registrationNumber}</code></td>
+                    <td><code>{item.registrationNumber}</code>{item.familyCode && <small>Family · {item.familyCode}</small>}</td>
                     <td><span>{item.guardianPhone}</span><small>Registered {formatDate(item.createdAt)}</small></td>
                     <td>
                       <span className={`email-pill email-pill--${item.emailStatus}`}>{emailStatusLabels[item.emailStatus] ?? item.emailStatus}</span>
@@ -298,7 +304,8 @@ export default function Admin() {
           row={openRow}
           onClose={() => setOpenId(null)}
           deciding={updateStatus.isPending}
-          onDecision={status => updateStatus.mutate({ id: openRow.id, paymentStatus: status }, { onSuccess: () => setOpenId(null) })}
+          onDecision={(status, actualAmountNgn) => updateStatus.mutate({ id: openRow.id, paymentStatus: status, actualAmountNgn }, { onSuccess: () => setOpenId(null) })}
+          familyRows={rows.filter(row => openRow.familyCode ? row.familyCode === openRow.familyCode : row.id === openRow.id)}
         />
       )}
     </div>
