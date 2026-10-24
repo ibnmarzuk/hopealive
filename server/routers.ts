@@ -132,13 +132,15 @@ function toPublicRegistration(row: PublicRegistrationSource) {
 export type PublicRegistration = ReturnType<typeof toPublicRegistration>;
 
 /** Sends the group-link email. Never fatal; the on-screen link already covers a verified user. */
-async function notifyPaymentVerified(row: Pick<Registration, "guardianEmail" | "studentName" | "registrationNumber" | "classGroup" | "schoolClass" | "createdAt">) {
+async function notifyPaymentVerified(
+  row: Pick<Registration, "guardianEmail" | "studentName" | "registrationNumber" | "classGroup" | "schoolClass" | "createdAt"> & { feeNgn?: number | null },
+) {
   if (!row.guardianEmail) return;
   await sendPaymentVerifiedEmail(row.guardianEmail, {
     studentName: row.studentName,
     registrationNumber: row.registrationNumber,
     classGroup: row.classGroup,
-    feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt),
+    feeNgn: row.feeNgn ?? registrationFeeNgn(row.schoolClass, row.createdAt),
     groupUrl: ENV.whatsappGroupUrl,
     appUrl: ENV.appUrl,
   });
@@ -533,20 +535,28 @@ export const appRouter = router({
         };
         if (registration.familyCode) {
           const family = await store.findByFamilyCode(registration.familyCode);
+          const expected = family.reduce((sum, row) => sum + (registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0);
           if (becomingVerified) {
-            const expected = family.reduce((sum, row) => sum + (registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0);
             const actual = input.actualAmountNgn;
             if (!actual) throw new TRPCError({ code: "BAD_REQUEST", message: `Enter the bank-confirmed amount for this family. Expected total: ₦${expected.toLocaleString("en-NG")}.` });
             if (actual !== expected) throw new TRPCError({ code: "BAD_REQUEST", message: `The entered amount does not match the family total of ₦${expected.toLocaleString("en-NG")}. Leave the family pending and investigate the difference.` });
             await store.updateByFamilyCode(registration.familyCode, { ...patch, verifiedAmountNgn: null });
             const lead = family.find(row => row.familyPaymentLead) ?? family[0];
             await store.updateById(lead.id, { verifiedAmountNgn: actual });
+            await notifyPaymentVerified({
+              ...registration,
+              guardianEmail: lead.guardianEmail,
+              studentName: `${family.length} participants`,
+              registrationNumber: registration.familyCode,
+              schoolClass: family.map(row => row.schoolClass).join(", "),
+              classGroup: "Family",
+              feeNgn: expected,
+            });
           } else await store.updateByFamilyCode(registration.familyCode, patch);
         } else {
           await store.updateById(input.id, { ...patch, ...(becomingVerified ? { verifiedAmountNgn: input.actualAmountNgn ?? registrationFeeNgn(registration.schoolClass, registration.createdAt) } : {}) });
+          if (becomingVerified) await notifyPaymentVerified(registration);
         }
-
-        if (becomingVerified) await notifyPaymentVerified(registration);
 
         return { success: true, emailed: becomingVerified && Boolean(registration.guardianEmail) } as const;
       }),

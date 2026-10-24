@@ -383,6 +383,38 @@ describe("admin procedures", () => {
     expect(stored).toMatchObject({ paymentStatus: "rejected", verificationStatus: "rejected" });
     expect(sendPaymentVerifiedEmail).not.toHaveBeenCalled();
   });
+
+  it("confirms a family payment only when the bank amount matches the family total", async () => {
+    const created = await caller().registration.createFamily({
+      registrationType: "family",
+      guardianPhone: "0805 778 2932",
+      guardianEmail: "family@example.com",
+      consentToEmail: true,
+      participants: [
+        { studentName: "Maryam Ibrahim", schoolClass: "Basic 4" },
+        { studentName: "Yusuf Ibrahim", schoolClass: "SS 1" },
+      ],
+    });
+    const lead = (await (await getStore()).findByFamilyCode(created.familyCode!)).find(row => row.familyPaymentLead)!;
+    await expect(adminCaller().registration.adminUpdateStatus({ id: lead.id, paymentStatus: "verified" })).rejects.toThrow(/bank-confirmed amount/i);
+    await expect(
+      adminCaller().registration.adminUpdateStatus({ id: lead.id, paymentStatus: "verified", actualAmountNgn: (created.feeNgn ?? 0) - 1 }),
+    ).rejects.toThrow(/does not match/i);
+
+    sendPaymentVerifiedEmail.mockClear();
+    const result = await adminCaller().registration.adminUpdateStatus({
+      id: lead.id,
+      paymentStatus: "verified",
+      actualAmountNgn: created.feeNgn ?? 0,
+    });
+    expect(result.emailed).toBe(true);
+    expect(sendPaymentVerifiedEmail).toHaveBeenCalledOnce();
+    expect(sendPaymentVerifiedEmail.mock.calls[0][1]).toMatchObject({
+      registrationNumber: created.familyCode,
+      classGroup: "Family",
+      feeNgn: created.feeNgn,
+    });
+  });
 });
 
 describe("auth.adminLogin", () => {

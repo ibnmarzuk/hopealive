@@ -31,6 +31,17 @@ function formatDate(value: Date | string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }
 
+function promptConfirmedAmount(expected: number): number | null {
+  const value = window.prompt(`Enter the amount confirmed in the bank account (expected ₦${expected.toLocaleString("en-NG")}).`, String(expected));
+  if (value === null) return null;
+  const amount = Number(value.replace(/[₦,\s]/g, ""));
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    toast.error("Enter a valid amount in naira.");
+    return null;
+  }
+  return amount;
+}
+
 /** One-word payment state derived from the existing status columns. */
 function paymentSummary(row: AdminRow): { label: string; tone: string } {
   if (row.verificationStatus === "verified") return { label: "Confirmed", tone: "verified" };
@@ -88,7 +99,7 @@ function RegistrationDialog({ row, onClose, onDecision, deciding, familyRows }: 
 
             <div className="receipt-dialog__actions">
               {row.verificationStatus !== "verified" && (
-                <button className="button button--ink" type="button" disabled={deciding} onClick={() => { const value = window.prompt(`Enter the amount confirmed in the bank account (expected ₦${familyTotal.toLocaleString("en-NG")}).`, String(familyTotal)); if (value === null) return; const amount = Number(value.replace(/[₦,\s]/g, "")); if (!Number.isSafeInteger(amount) || amount <= 0) { toast.error("Enter a valid amount in naira."); return; } onDecision("verified", amount); }}><Check size={16} /> Confirm payment</button>
+                <button className="button button--ink" type="button" disabled={deciding} onClick={() => { const amount = promptConfirmedAmount(familyTotal); if (amount == null) return; onDecision("verified", amount); }}><Check size={16} /> Confirm payment</button>
               )}
               {row.verificationStatus !== "rejected" && (
                 <button className="button button--outline" type="button" disabled={deciding} onClick={() => onDecision("rejected")}><X size={16} /> Reject</button>
@@ -151,7 +162,7 @@ export default function Admin() {
     const query = search.toLowerCase().trim();
     if (!query) return rows;
     return rows.filter(item =>
-      [item.studentName, item.registrationNumber, item.schoolClass, item.classGroup, item.guardianPhone, item.guardianEmail]
+      [item.studentName, item.registrationNumber, item.familyCode, item.schoolClass, item.classGroup, item.guardianPhone, item.guardianEmail]
         .some(value => typeof value === "string" && value.toLowerCase().includes(query)),
     );
   }, [rows, search]);
@@ -211,7 +222,7 @@ export default function Admin() {
   if (data && !data.emailConfigured) warnings.push(`Confirmation emails are not being sent: ${data.emailProblem}.`);
   if (data && !data.groupLinkConfigured) warnings.push("WHATSAPP_GROUP_URL is not set; confirmed families will not receive a group link.");
 
-  const awaitingReview = rows.filter(row => row.receiptStatus === "submitted" && row.verificationStatus !== "verified" && row.verificationStatus !== "rejected").length;
+  const awaitingReview = rows.filter(row => row.receiptStatus === "submitted" && row.verificationStatus !== "verified" && row.verificationStatus !== "rejected" && (!row.familyCode || row.familyPaymentLead)).length;
 
   return (
     <div className="admin-page">
@@ -284,7 +295,18 @@ export default function Admin() {
                     <td>
                       <select
                         value={item.paymentStatus}
-                        onChange={event => updateStatus.mutate({ id: item.id, paymentStatus: event.target.value as PaymentStatus })}
+                        onChange={event => {
+                          const paymentStatus = event.target.value as PaymentStatus;
+                          if (paymentStatus !== "verified") {
+                            updateStatus.mutate({ id: item.id, paymentStatus });
+                            return;
+                          }
+                          const familyRows = item.familyCode ? rows.filter(row => row.familyCode === item.familyCode) : [item];
+                          const expected = familyRows.reduce((sum, member) => sum + (member.feeNgn ?? 0), 0);
+                          const amount = promptConfirmedAmount(expected);
+                          if (amount == null) return;
+                          updateStatus.mutate({ id: item.id, paymentStatus, actualAmountNgn: amount });
+                        }}
                       >
                         {PAYMENT_STATUSES.map(value => <option value={value} key={value}>{PAYMENT_STATUS_LABELS[value]}</option>)}
                       </select>

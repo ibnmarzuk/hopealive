@@ -264,12 +264,12 @@ export default function Registration() {
     view === "resume" ? <>Continue your<br /><em>registration.</em></>
     : view === "payment" && isVerified ? <>Payment<br /><em>confirmed.</em></>
     : view === "payment" ? <>Payment, made<br /><em>simple.</em></>
-    : <>Register a<br /><em>participant.</em></>;
+    : <>Register a child<br /><em>or family.</em></>;
 
   const introCopy =
-    view === "resume" ? "Use the registration ID and phone number you received when you registered. We will bring your saved registration back."
-    : view === "payment" ? "Pay by bank transfer, then optionally upload your receipt. Our team confirms your payment using your registration ID."
-    : "A short, clear registration for the Islamic Vacation Course camping programme in Ilorin.";
+    view === "resume" ? "Use the registration ID or family passkey, plus the phone number from registration. We will bring the saved record back."
+    : view === "payment" ? "Pay by bank transfer, then optionally upload your receipt. Our team confirms your payment using the ID or family passkey as the reference."
+    : "Register one child or a family of up to six for the Islamic Vacation Course camping programme in Ilorin.";
 
   return (
     <div className="registration-page">
@@ -305,8 +305,8 @@ export default function Registration() {
               {registrationType === "family" && <label>Number of children<select value={participants.length} onChange={event => { const count = Number(event.target.value); setParticipants(current => Array.from({ length: count }, (_, index) => current[index] ?? { studentName: "", schoolClass: "" })); }}><option value={2}>2 children</option><option value={3}>3 children</option><option value={4}>4 children</option><option value={5}>5 children</option><option value={6}>6 children</option></select></label>}
 
               {visibleParticipants.map((participant, index) => (
-                <div className="participant-fields" key={index}>
-                  <h3>{registrationType === "family" ? `Child ${index + 1}` : "Participant"}</h3>
+                <div className="class-group-note" key={index} style={{ display: "grid", gap: "0.85rem", alignItems: "stretch" }}>
+                  <strong>{registrationType === "family" ? `Child ${index + 1}` : "Participant"}</strong>
                   <label>
                     Student / participant full name
                     <input
@@ -400,15 +400,15 @@ export default function Registration() {
               <div className="form-heading">
                 <span>Continue registration</span>
                 <h2>Bring it back.</h2>
-                <p>Enter your registration ID and the same phone number used to register.</p>
+                <p>Enter your registration ID or family passkey, and the same phone number used to register.</p>
               </div>
 
               <label>
-                Registration ID
+                Registration ID or family passkey
                 <input
                   value={lookupNumber}
                   onChange={event => setLookupNumber(event.target.value.toUpperCase())}
-                  placeholder="e.g. MIDDLE-014"
+                  placeholder="e.g. MIDDLE-014 or HA-A1B2C3D4"
                   aria-invalid={Boolean(lookupErrors.registrationNumber)}
                 />
                 {lookupErrors.registrationNumber && <small className="field-error">{lookupErrors.registrationNumber}</small>}

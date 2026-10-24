@@ -153,6 +153,20 @@ describe("familyRegistrationInputSchema", () => {
     expect(familyRegistrationInputSchema.safeParse({ ...familyValid, consentToEmail: true }).success).toBe(false);
     expect(familyRegistrationInputSchema.safeParse({ ...familyValid, consentToEmail: true, guardianEmail: "parent@example.com" }).success).toBe(true);
   });
+
+  it("points missing child names at the nested participant path", () => {
+    const parsed = familyRegistrationInputSchema.safeParse({
+      ...familyValid,
+      participants: [
+        { studentName: "", schoolClass: "Basic 4" },
+        { studentName: "Yusuf Ibrahim", schoolClass: "SS 1" },
+      ],
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.some(issue => issue.path.join(".") === "participants.0.studentName")).toBe(true);
+    }
+  });
 });
 
 describe("registrationLookupSchema", () => {

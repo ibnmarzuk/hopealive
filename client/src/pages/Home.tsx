@@ -50,19 +50,19 @@ const registerSteps = [
   {
     number: "01",
     title: "Fill the short form",
-    copy: "Participant name, your email and phone number, and the class they are in. It takes about a minute.",
+    copy: "Register one child, or a family of up to six. We need each name, class and a phone number. Email is optional.",
     icon: Users,
   },
   {
     number: "02",
-    title: "Get your number by email",
-    copy: "We email your registration number and the camp details straight away, so you have everything in writing.",
+    title: "Keep the ID or passkey",
+    copy: "Each child gets a registration ID. A family also gets one passkey for a single payment and receipt. Copy it — we only email it if you ask.",
     icon: Mail,
   },
   {
     number: "03",
     title: "Pay and keep your ID",
-    copy: "Transfer the fee using your registration ID as the reference. Our team confirms your payment, and confirmed participants get the group link.",
+    copy: "Transfer the fee using the registration ID or family passkey as the reference. Our team confirms payment, and confirmed participants get the group link.",
     icon: ShieldCheck,
   },
 ];
@@ -76,17 +76,17 @@ const faqs = [
   {
     question: "What happens after I register?",
     answer:
-      "Your place is saved immediately and you get a registration number. We email that number and the camp details to the address you give us, so keep an eye on your inbox (and your spam folder, just in case). You can pay later using the same number.",
+      "Your place is saved immediately. You get a registration ID for each child, and a family passkey if you registered siblings together. Email is optional — if you opt in, we send the IDs and camp details. You can pay later using the same ID or passkey.",
   },
   {
     question: "Do I need to pay to register?",
     answer:
-      "No. Registration is saved before payment, so you can reserve a place first and pay when you are ready. Every participant, including siblings, needs their own registration.",
+      "No. Registration is saved before payment, so you can reserve a place first and pay when you are ready. Siblings can register together, share one transfer, and still receive their own IDs for check-in.",
   },
   {
     question: "How is my payment confirmed, and how do I join the WhatsApp group?",
     answer:
-      "Transfer the fee using your registration ID as the reference. You can optionally upload a screenshot of your receipt to help us find it faster. Our team checks each payment and confirms it manually. Only confirmed participants receive the group link — on screen and by email — so please don’t share it on.",
+      "Transfer the fee using your registration ID or family passkey as the reference. You can optionally upload a screenshot of your receipt to help us find it faster. Our team checks each payment and confirms it manually. Only confirmed participants receive the group link — on screen and by email — so please don’t share it on.",
   },
   {
     question: "Where and when is IVC 2026?",
@@ -160,15 +160,15 @@ export default function Home() {
           <div className="hero-copy">
             <SectionLabel><span className="label-dot" /> Islamic Vacation Course 2026</SectionLabel>
             <h1>Reserve their place <em>today.</em></h1>
-            <p className="hero-lede">Register for the IVC 2026 camping programme in Ilorin. Your place is saved straight away, your registration number is emailed to you, and payment can wait until you are ready.</p>
+            <p className="hero-lede">Register one child or a family for the IVC 2026 camping programme in Ilorin. Your place is saved straight away, and payment can wait until you are ready.</p>
             <div className="hero-actions">
               <a className="button button--ink button--lg" href="/register">Register a participant <ArrowUpRight size={18} /></a>
               <a className="text-link" href="/register?mode=continue">Continue a registration <span>↘</span></a>
             </div>
             <ul className="hero-assurances">
               <li><Check size={14} /> Free to register — pay later</li>
-              <li><Check size={14} /> Confirmation emailed instantly</li>
-              <li><Check size={14} /> Takes about a minute</li>
+              <li><Check size={14} /> One child or a family of up to six</li>
+              <li><Check size={14} /> Email optional</li>
             </ul>
           </div>
           <div className="hero-visual">
@@ -200,7 +200,7 @@ export default function Home() {
               <SectionLabel>How to register</SectionLabel>
               <h2>Three steps,<br /><em>one minute.</em></h2>
             </div>
-            <p>Registration is open to every participant. Siblings each get their own number, so register them one at a time.</p>
+            <p>Registration is open to every participant. Siblings can register together, share one payment, and still receive their own IDs.</p>
           </div>
           <div className="steps-grid">
             {registerSteps.map(({ number, title, copy, icon: Icon }) => (
