@@ -56,7 +56,7 @@ const registerSteps = [
   {
     number: "02",
     title: "Keep the ID or passkey",
-    copy: "Each child gets a registration ID. A family also gets one passkey for a single payment and receipt. Copy it — we only email it if you ask.",
+    copy: "Each child gets a registration ID. A family also gets one passkey for a single payment and receipt. Copy it and keep it safe for later.",
     icon: Mail,
   },
   {
@@ -76,7 +76,7 @@ const faqs = [
   {
     question: "What happens after I register?",
     answer:
-      "Your place is saved immediately. You get a registration ID for each child, and a family passkey if you registered siblings together. Email is optional — if you opt in, we send the IDs and camp details. You can pay later using the same ID or passkey.",
+      "Your place is saved immediately. You get a registration ID for each child, and a family passkey if you registered siblings together. Email is optional, and your registration can always be reopened later with the same ID or passkey.",
   },
   {
     question: "Do I need to pay to register?",
@@ -86,7 +86,7 @@ const faqs = [
   {
     question: "How is my payment confirmed, and how do I join the WhatsApp group?",
     answer:
-      "Transfer the fee using your registration ID or family passkey as the reference. You can optionally upload a screenshot of your receipt to help us find it faster. Our team checks each payment and confirms it manually. Only confirmed participants receive the group link — on screen and by email — so please don’t share it on.",
+      "Transfer the fee using your registration ID or family passkey as the reference. Upload the receipt screenshot so the payment can be reviewed. Our team checks each payment and confirms it manually. Only confirmed participants receive the group link on screen, so please don’t share it publicly.",
   },
   {
     question: "Where and when is IVC 2026?",

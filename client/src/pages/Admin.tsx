@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, Clock3, LogIn, LogOut, Mail, RefreshCw, Search, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Clock3, LogIn, LogOut, RefreshCw, Search, ShieldCheck, X } from "lucide-react";
 import { TRPCClientError } from "@trpc/client";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -10,13 +10,6 @@ import { friendlyErrorMessage } from "@/lib/errors";
 import type { AppRouter } from "../../../server/routers";
 
 type AdminRow = inferRouterOutputs<AppRouter>["registration"]["adminList"]["rows"][number];
-
-const emailStatusLabels: Record<string, string> = {
-  pending: "Pending",
-  sent: "Sent",
-  failed: "Failed",
-  skipped: "Not sent",
-};
 
 /** Only an auth failure should prompt a sign-in; everything else is a real error. */
 function isAuthError(error: unknown): boolean {
@@ -157,14 +150,6 @@ export default function Admin() {
     onError: error => toast.error(friendlyErrorMessage(error)),
   });
 
-  const resendEmail = trpc.registration.adminResendEmail.useMutation({
-    onSuccess: result => {
-      toast.success(`Confirmation email re-sent to ${result.recipient}.`);
-      registrations.refetch();
-    },
-    onError: error => toast.error(friendlyErrorMessage(error)),
-  });
-
   const rows = registrations.data?.rows ?? [];
 
   const filtered = useMemo(() => {
@@ -241,7 +226,6 @@ export default function Admin() {
 
   const data = registrations.data;
   const warnings: string[] = [];
-  if (data && !data.emailConfigured) warnings.push(`Confirmation emails are not being sent: ${data.emailProblem}.`);
   if (data && !data.groupLinkConfigured) warnings.push("WHATSAPP_GROUP_URL is not set; confirmed families will not receive a group link.");
 
   const awaitingReview = rows.filter(row => row.receiptStatus === "submitted" && row.verificationStatus !== "verified" && row.verificationStatus !== "rejected" && (!row.familyCode || row.familyPaymentLead)).length;
@@ -279,7 +263,6 @@ export default function Admin() {
             <span><strong>₦{(data?.confirmedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Amount confirmed</small></span>
             <span><strong>₦{(data?.pendingExpectedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Expected, pending</small></span>
             <span><strong>{awaitingReview}</strong><small>Evidence to review</small></span>
-            <span><strong>{rows.filter(item => item.emailStatus === "failed").length}</strong><small>Email failures</small></span>
           </div>
         </div>
 
@@ -305,7 +288,7 @@ export default function Admin() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
-              <tr><th>Participant</th><th>Group</th><th>Registration ID</th><th>Contact</th><th>Email</th><th>Payment</th><th>Set status</th></tr>
+              <tr><th>Participant</th><th>Group</th><th>Registration ID</th><th>Contact</th><th>Payment</th><th>Set status</th></tr>
             </thead>
             <tbody>
               {filtered.map(item => {
@@ -319,15 +302,6 @@ export default function Admin() {
                     <td>{item.classGroup}</td>
                     <td><code>{item.registrationNumber}</code>{item.familyCode && <small>Family · {item.familyCode}</small>}</td>
                     <td><span>{item.guardianPhone}</span><small>Registered {formatDate(item.createdAt)}</small></td>
-                    <td>
-                      <span className={`email-pill email-pill--${item.emailStatus}`}>{emailStatusLabels[item.emailStatus] ?? item.emailStatus}</span>
-                      {item.emailError && <small className="email-pill__error" title={item.emailError}>{item.emailError}</small>}
-                      {item.guardianEmail && item.emailStatus !== "sent" && (
-                        <button className="plain-action plain-action--inline" type="button" disabled={resendEmail.isPending} onClick={() => resendEmail.mutate({ id: item.id })}>
-                          <Mail size={13} /> Resend
-                        </button>
-                      )}
-                    </td>
                     <td>
                       <span className={`receipt-pill receipt-pill--${payment.tone}`}>{payment.label}</span>
                       {item.feeNgn != null && <small>Expected: ₦{item.feeNgn.toLocaleString("en-NG")}</small>}

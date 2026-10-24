@@ -268,7 +268,7 @@ export default function Registration() {
 
   const introCopy =
     view === "resume" ? "Use the registration ID or family passkey, plus the phone number from registration. We will bring the saved record back."
-    : view === "payment" ? "Pay by bank transfer, then optionally upload your receipt. Our team confirms your payment using the ID or family passkey as the reference."
+    : view === "payment" ? "Pay by bank transfer, then upload your receipt. Our team confirms your payment using the ID or family passkey as the reference."
     : "Register one child or a family of up to six for the Islamic Vacation Course camping programme in Ilorin.";
 
   return (
@@ -343,7 +343,7 @@ export default function Registration() {
               ))}
 
               <label>
-                Email address (optional)
+                Contact email (optional)
                 <input
                   value={guardianEmail}
                   onChange={event => { setGuardianEmail(event.target.value); revalidate({ guardianEmail: event.target.value }); }}
@@ -354,7 +354,7 @@ export default function Registration() {
                   aria-invalid={Boolean(fieldError("guardianEmail"))}
                   aria-describedby="email-hint"
                 />
-                <small id="email-hint" className="field-hint"><Mail size={12} /> Email is optional. Save the passkey and participant IDs shown after registration.</small>
+                <small id="email-hint" className="field-hint"><Mail size={12} /> Optional contact email for follow-up and updates.</small>
                 {fieldError("guardianEmail") && <small className="field-error">{fieldError("guardianEmail")}</small>}
               </label>
 
@@ -452,22 +452,10 @@ export default function Registration() {
 
               {record.members?.map(member => <div className="class-group-note" key={member.registrationNumber}><span><strong>{member.studentName}</strong> · {member.schoolClass} · {member.registrationNumber} · {member.feeNgn == null ? "Fee unavailable" : formatNaira(member.feeNgn)}</span></div>)}
 
-              {record.emailStatus === "sent" ? (
-                <div className="email-status email-status--ok">
-                  <Mail size={17} />
-                  <span>We’ve sent your registration ID to <strong>{record.guardianEmail}</strong>. If it hasn’t arrived in a few minutes, check your spam folder.</span>
-                </div>
-              ) : record.emailStatus === "skipped" || !record.guardianEmail ? (
-                <div className="email-status email-status--ok">
-                  <ShieldCheck size={17} />
-                  <span>No confirmation email was sent. Copy the ID above and keep it safe — it is how you continue later.</span>
-                </div>
-              ) : (
-                <div className="email-status email-status--warn">
-                  <AlertTriangle size={17} />
-                  <span>Your registration is saved, but we could not send the confirmation email right now. Please copy your ID above — you can also reach us on WhatsApp {record.payment.enquiriesPhone}.</span>
-                </div>
-              )}
+              <div className="email-status email-status--ok">
+                <ShieldCheck size={17} />
+                <span>Keep this reference safe — you can return later and continue from the same registration using the same ID or passkey.</span>
+              </div>
 
               <button className="button button--ink button--full" onClick={() => setView("payment")}>Continue to payment <ArrowUpRight size={18} /></button>
               <button className="plain-action" onClick={() => setLocation("/")}>I’ll do this later — return to website</button>
@@ -481,7 +469,7 @@ export default function Registration() {
                   <span className="result-check result-check--verified"><Sparkles size={26} /></span>
                   <span className="section-label">Step 3 of 3 · {record.registrationNumber}</span>
                   <h2>You’re all<br /><em>set.</em></h2>
-                  <p>{record.studentName}’s place at IVC 2026 is confirmed under {record.classGroup}. We’ve also emailed this confirmation{record.guardianEmail ? <> to <strong>{record.guardianEmail}</strong></> : null}.</p>
+                  <p>{record.studentName}’s place at IVC 2026 is confirmed under {record.classGroup}. Your registration has been saved and the payment was reviewed successfully.</p>
 
                   {record.whatsappGroupUrl ? (
                     <div className="group-card">
@@ -504,7 +492,7 @@ export default function Registration() {
                   <h2>Pay, then keep<br /><em>your ID.</em></h2>
                   <p>{record.familyCode
                     ? "Transfer the full amount using the family passkey as the reference. One receipt covers every participant in this family; our team confirms it in the dashboard."
-                    : "Transfer the fee using the registration ID as the reference, then optionally upload a receipt screenshot."}</p>
+                    : "Transfer the fee using the registration ID as the reference, then upload your receipt screenshot. Receipt upload is required before payment review."}</p>
 
                   <div className="registration-number-card">
                     <small>{record.familyCode ? "Family passkey (use as payment reference)" : "Registration ID (use as payment reference)"}</small>
@@ -560,7 +548,7 @@ export default function Registration() {
 
                   {showUploader && (
                     <div className="receipt-upload">
-                      <p className="receipt-upload__intro"><CreditCard size={15} /> Optional: upload your receipt. Submitting it does <strong>not</strong> confirm payment — our team reviews every payment.</p>
+                      <p className="receipt-upload__intro"><CreditCard size={15} /> Required: upload your receipt screenshot before the payment can be reviewed. Submitting it does <strong>not</strong> confirm payment — our team reviews every payment.</p>
                       <input
                         ref={fileInputRef}
                         id="receipt-file"
