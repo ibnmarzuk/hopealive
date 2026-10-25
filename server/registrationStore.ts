@@ -14,7 +14,7 @@ import type { EmailStatus } from "@shared/registration";
  *                  admin dashboard — works out of the box in local/preview runs.
  *
  * The router talks only to this interface, so the two paths can never drift in
- * behaviour. In production the platform provides DATABASE_URL or POSTGRES_URL.
+ * behaviour. In production configure DATABASE_URL or POSTGRES_URL.
  */
 
 export class DuplicateRegistrationError extends Error {
@@ -60,6 +60,10 @@ export type AdminListRow = Pick<
   | "receiptAttempts"
   | "verifiedAt"
   | "verifiedBy"
+  | "checkedInAt"
+  | "checkedInBy"
+  | "entitlementsEligibleAt"
+  | "entitlementsEligibleBy"
   | "notes"
   | "createdAt"
 >;
@@ -101,6 +105,10 @@ const ADMIN_COLUMNS = {
   receiptAttempts: registrations.receiptAttempts,
   verifiedAt: registrations.verifiedAt,
   verifiedBy: registrations.verifiedBy,
+  checkedInAt: registrations.checkedInAt,
+  checkedInBy: registrations.checkedInBy,
+  entitlementsEligibleAt: registrations.entitlementsEligibleAt,
+  entitlementsEligibleBy: registrations.entitlementsEligibleBy,
   notes: registrations.notes,
   createdAt: registrations.createdAt,
 } as const;
@@ -249,7 +257,7 @@ type MemoryState = {
   nextId: number;
 };
 
-const DATE_FIELDS: (keyof Registration)[] = ["emailSentAt", "receiptSubmittedAt", "verifiedAt", "createdAt", "updatedAt"];
+const DATE_FIELDS: (keyof Registration)[] = ["emailSentAt", "receiptSubmittedAt", "verifiedAt", "checkedInAt", "entitlementsEligibleAt", "createdAt", "updatedAt"];
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATA_FILE = path.join(DATA_DIR, "registrations.json");
 /** Tests run fully in memory — no file writes. */
@@ -336,6 +344,10 @@ class MemoryStore implements RegistrationStore {
       receiptAnalysis: null,
       verifiedAt: null,
       verifiedBy: null,
+      checkedInAt: null,
+      checkedInBy: null,
+      entitlementsEligibleAt: null,
+      entitlementsEligibleBy: null,
       notes: null,
       createdAt: now,
       updatedAt: now,
@@ -380,6 +392,10 @@ class MemoryStore implements RegistrationStore {
       receiptAnalysis: null,
       verifiedAt: null,
       verifiedBy: null,
+      checkedInAt: null,
+      checkedInBy: null,
+      entitlementsEligibleAt: null,
+      entitlementsEligibleBy: null,
       notes: null,
       createdAt: item.createdAt,
       updatedAt: item.createdAt,

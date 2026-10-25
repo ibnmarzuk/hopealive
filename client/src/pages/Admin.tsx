@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, Clock3, LogIn, LogOut, RefreshCw, Search, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Clock3, LogIn, LogOut, RefreshCw, Search, ShieldCheck, UserRoundCheck, X } from "lucide-react";
 import { TRPCClientError } from "@trpc/client";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
-import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from "@shared/const";
 import { PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, registrationPricingPhase, type PaymentStatus } from "@shared/registration";
 import { trpc } from "@/lib/trpc";
 import { friendlyErrorMessage } from "@/lib/errors";
@@ -15,7 +14,7 @@ type AdminRow = inferRouterOutputs<AppRouter>["registration"]["adminList"]["rows
 function isAuthError(error: unknown): boolean {
   if (!(error instanceof TRPCClientError)) return false;
   const code = error.data?.code;
-  return code === "UNAUTHORIZED" || code === "FORBIDDEN" || error.message === UNAUTHED_ERR_MSG || error.message === NOT_ADMIN_ERR_MSG;
+  return code === "UNAUTHORIZED" || code === "FORBIDDEN";
 }
 
 function formatDate(value: Date | string | null | undefined): string {
@@ -51,7 +50,9 @@ function paymentActionClassName(tone: string): string {
 }
 
 /** Detail view for one registration: all fields, evidence, and manual controls. */
-function RegistrationDialog({ row, onClose, onDecision, deciding, familyRows }: { row: AdminRow; onClose: () => void; onDecision: (status: PaymentStatus, actualAmountNgn?: number) => void; deciding: boolean; familyRows: AdminRow[] }) {
+type CampAction = "check_in";
+
+function RegistrationDialog({ row, onClose, onDecision, onCampAction, deciding, campActionPending, familyRows }: { row: AdminRow; onClose: () => void; onDecision: (status: PaymentStatus, actualAmountNgn?: number) => void; onCampAction: (id: number, action: CampAction) => void; deciding: boolean; campActionPending: boolean; familyRows: AdminRow[] }) {
   const hasReceipt = row.receiptStatus === "submitted" && (!row.familyCode || row.familyPaymentLead);
   const imageId = row.familyCode ? familyRows.find(member => member.familyPaymentLead)?.id ?? row.id : row.id;
   const image = trpc.registration.adminReceiptImage.useQuery({ id: imageId }, { enabled: hasReceipt });
@@ -95,6 +96,24 @@ function RegistrationDialog({ row, onClose, onDecision, deciding, familyRows }: 
               {row.verifiedAt && <><dt>Confirmed</dt><dd>{formatDate(row.verifiedAt)} {row.verifiedBy ? `(${row.verifiedBy})` : ""}</dd></>}
             </dl>
             {row.familyCode && <div className="class-group-note">{familyRows.map(member => <div key={member.id}>{member.studentName} · {member.schoolClass} · {member.registrationNumber} · ₦{(member.feeNgn ?? 0).toLocaleString("en-NG")}</div>)}</div>}
+
+            <section className="camp-checkin" aria-labelledby="camp-checkin-heading">
+              <h3 id="camp-checkin-heading">Camp check-in</h3>
+              {row.verificationStatus !== "verified" ? (
+                <p className="camp-checkin__blocked">Payment must be confirmed before this participant can check in or receive entitlements.</p>
+              ) : (
+                <>
+                  <p className="camp-checkin__state">
+                    <span>{row.checkedInAt ? `Checked in · ${formatDate(row.checkedInAt)}${row.checkedInBy ? ` by ${row.checkedInBy}` : ""}` : "Not checked in"}</span>
+                    <span>{row.entitlementsEligible ? "Eligible for all camp entitlements" : "Not eligible for camp entitlements until payment is confirmed"}</span>
+                  </p>
+                  <p className="camp-checkin__note">Eligibility is added automatically when payment is confirmed. Staff only need to record participant arrival.</p>
+                  <div className="receipt-dialog__actions">
+                    {!row.checkedInAt && <button className="button button--ink" type="button" disabled={campActionPending} onClick={() => onCampAction(row.id, "check_in")}><UserRoundCheck size={16} /> Mark checked in</button>}
+                  </div>
+                </>
+              )}
+            </section>
 
             <p className="receipt-dialog__reasoning">Confirm only after checking the bank account. Family registrations share one payment status and one receipt record.</p>
 
@@ -150,7 +169,17 @@ export default function Admin() {
     onError: error => toast.error(friendlyErrorMessage(error)),
   });
 
+  const updateCampStatus = trpc.registration.adminUpdateCampStatus.useMutation({
+    onSuccess: result => {
+      toast.success("Participant checked in.");
+      registrations.refetch();
+    },
+    onError: error => toast.error(friendlyErrorMessage(error)),
+  });
+
   const rows = registrations.data?.rows ?? [];
+  const checkedInCount = rows.filter(row => row.checkedInAt).length;
+  const entitlementsEligibleCount = rows.filter(row => row.entitlementsEligible).length;
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase().trim();
@@ -173,6 +202,16 @@ export default function Admin() {
       return true;
     });
   }, [phaseFilter, rows, search]);
+
+  const phaseCounts = useMemo(() => {
+    const counts = { early: 0, second: 0 };
+    for (const row of rows) {
+      const phase = registrationPricingPhase(row.createdAt);
+      if (phase === "Early bird") counts.early += 1;
+      else if (phase === "Second phase") counts.second += 1;
+    }
+    return counts;
+  }, [rows]);
 
   const openRow = openId == null ? null : rows.find(row => row.id === openId) ?? null;
 
@@ -229,15 +268,6 @@ export default function Admin() {
   if (data && !data.groupLinkConfigured) warnings.push("WHATSAPP_GROUP_URL is not set; confirmed families will not receive a group link.");
 
   const awaitingReview = rows.filter(row => row.receiptStatus === "submitted" && row.verificationStatus !== "verified" && row.verificationStatus !== "rejected" && (!row.familyCode || row.familyPaymentLead)).length;
-  const phaseCounts = useMemo(() => {
-    const counts = { early: 0, second: 0 };
-    for (const row of rows) {
-      const phase = registrationPricingPhase(row.createdAt);
-      if (phase === "Early bird") counts.early += 1;
-      else if (phase === "Second phase") counts.second += 1;
-    }
-    return counts;
-  }, [rows]);
 
   return (
     <div className="admin-page">
@@ -254,7 +284,7 @@ export default function Admin() {
           <div>
             <span className="section-label"><span className="label-dot" /> IVC 2026</span>
             <h1>Registration<br /><em>dashboard.</em></h1>
-            <p>Search by registration ID, review a participant’s details and evidence, then confirm or reject the payment.</p>
+            <p>{data?.viewerRole === "subadmin" ? "Sub-admin access · view registrations, confirm or reject payments, and check participants in." : "Super-admin access · manage registrations, payments, and camp check-in."}</p>
           </div>
           <div className="admin-summary">
             <span><strong>{rows.length}</strong><small>Total registrations</small></span>
@@ -263,6 +293,8 @@ export default function Admin() {
             <span><strong>₦{(data?.confirmedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Amount confirmed</small></span>
             <span><strong>₦{(data?.pendingExpectedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Expected, pending</small></span>
             <span><strong>{awaitingReview}</strong><small>Evidence to review</small></span>
+            <span><strong>{checkedInCount}</strong><small>Checked in</small></span>
+            <span><strong>{entitlementsEligibleCount}</strong><small>Eligible for entitlements</small></span>
           </div>
         </div>
 
@@ -288,7 +320,7 @@ export default function Admin() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
-              <tr><th>Participant</th><th>Group</th><th>Registration ID</th><th>Contact</th><th>Payment</th><th>Set status</th></tr>
+              <tr><th>Participant</th><th>Group</th><th>Registration ID</th><th>Contact</th><th>Payment</th><th>Camp</th><th>Set status</th></tr>
             </thead>
             <tbody>
               {filtered.map(item => {
@@ -313,6 +345,10 @@ export default function Admin() {
                       </button>
                     </td>
                     <td>
+                      <span className={`receipt-pill receipt-pill--${item.verificationStatus === "verified" ? "verified" : "none"}`}>{item.checkedInAt ? "Checked in" : item.verificationStatus === "verified" ? "Awaiting arrival" : "Not eligible"}</span>
+                      <small>{item.entitlementsEligible ? "Eligible for entitlements" : "Not eligible"}</small>
+                    </td>
+                    <td>
                       <select
                         value={item.paymentStatus}
                         onChange={event => {
@@ -328,7 +364,15 @@ export default function Admin() {
                           updateStatus.mutate({ id: item.id, paymentStatus, actualAmountNgn: amount });
                         }}
                       >
-                        {PAYMENT_STATUSES.map(value => <option value={value} key={value}>{PAYMENT_STATUS_LABELS[value]}</option>)}
+                        {PAYMENT_STATUSES.map(value => (
+                          <option
+                            value={value}
+                            key={value}
+                            disabled={data?.viewerRole === "subadmin" && value !== "verified" && value !== "rejected"}
+                          >
+                            {PAYMENT_STATUS_LABELS[value]}
+                          </option>
+                        ))}
                       </select>
                     </td>
                   </tr>
@@ -347,6 +391,8 @@ export default function Admin() {
           onClose={() => setOpenId(null)}
           deciding={updateStatus.isPending}
           onDecision={(status, actualAmountNgn) => updateStatus.mutate({ id: openRow.id, paymentStatus: status, actualAmountNgn }, { onSuccess: () => setOpenId(null) })}
+          onCampAction={(id, action) => updateCampStatus.mutate({ id, action })}
+          campActionPending={updateCampStatus.isPending}
           familyRows={rows.filter(row => openRow.familyCode ? row.familyCode === openRow.familyCode : row.id === openRow.id)}
         />
       )}

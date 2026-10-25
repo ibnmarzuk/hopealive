@@ -1,6 +1,7 @@
 # Hope-Alive Islamic Vacation Course
 
-React / Express / tRPC / Drizzle starter, adapted from the Sandbox web-db-user template.
+Hope-Alive's camp registration and administration app, built with React, Express, tRPC,
+and Drizzle.
 
 - `pnpm dev`: development server; honors `PORT` (default 3000).
 - `pnpm build` / `pnpm start`: build and serve `dist/index.js` and `dist/public/`.
@@ -20,8 +21,8 @@ Required for the registration flow to work end to end:
 | `RESEND_FROM_EMAIL` | Sender on a domain **verified in Resend** | Same as above |
 | `APP_URL` | Public base URL | Confirmation email omits the "continue" link |
 
-`RESEND_REPLY_TO` is optional. The Resend key is read only in `server/email/resend.ts`; it is never
-added to `server/_core/publicConfig.ts`, so it cannot reach the browser.
+`RESEND_REPLY_TO` is optional. The Resend key is read only in `server/email/resend.ts` and is
+never sent to the browser.
 
 Run `pnpm db:migrate` after setting `DATABASE_URL` or `POSTGRES_URL` to create the PostgreSQL
 schema. The checked-in migrations are the source of truth for a new Supabase database.
@@ -41,10 +42,24 @@ schema. The checked-in migrations are the source of truth for a new Supabase dat
    `failed`/`skipped` plus a short reason, and the admin dashboard offers a Resend action.
 6. The UI reports the real outcome. `emailStatus: "sent"` means Resend *accepted* the message, not
    that it was delivered — the copy to the user says so.
+7. After registration, the family or participant can print/save a camp pass with participant IDs,
+   class groups, saved fees, and the current payment/receipt status. Receipt upload remains evidence
+   for review; the pass clearly says payment is pending until staff confirms it.
+8. Confirming payment automatically marks the participant eligible for camp entitlements. Admin
+   staff can then mark the participant checked in; the app records who and when. Eligibility is
+   not a record that supplies were physically issued.
+
+### Admin roles
+
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the super-admin, and `SUB_ADMIN_EMAIL` and
+`SUB_ADMIN_PASSWORD` for the limited sub-admin. Both accounts use the signed `ADMIN_SESSION_SECRET`
+cookie. Sub-admins can view registrations and receipts, confirm/reject payments, and check in
+participants; only super-admins can resend registration emails and manage other payment statuses.
+Configure credentials as private server environment variables and choose a strong password.
 
 ### Verification not covered by `pnpm test`
 
-`pnpm test` runs 64 tests, including the registration procedures against a fake DB and a mocked
+`pnpm test` runs 100 tests, including the registration procedures against a fake DB and a mocked
 Resend. These still need live credentials and a manual check:
 
 - Writing to a real Supabase/PostgreSQL instance (persistence and the `dedupeKey` unique index under
@@ -53,9 +68,3 @@ Resend. These still need live credentials and a manual check:
   confirm the message appears in the Resend dashboard and the inbox.
 - Sender-domain SPF/DKIM must be verified in Resend, or sends are rejected with an unverified-domain
   error (surfaced in the admin dashboard's Email column).
-
-Start with the Webdev skill's default-template guide. Platform login, storage, payments and service contracts live in its shared references; read the relevant capability before extending its helper.
-
-`server/_core/publicConfig.ts` exposes only named public runtime values. Private keys stay server-side. The platform serves managed `/manus-storage/` assets; the application does not register a second proxy.
-
-Platform configuration is readable and editable through `webdev.config`. Default settings are initial values, not enforced constraints. The agent may modify the files, commands and configuration or follow the flexible guide for another stack.

@@ -11,6 +11,7 @@ import {
   ImagePlus,
   Mail,
   MessageCircle,
+  Printer,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -50,6 +51,12 @@ function collectErrors(issues: { path: PropertyKey[]; message: string }[]): Fiel
 /** Formats naira without the "NGN" prefix the Intl default adds. */
 function formatNaira(amount: number): string {
   return `₦${amount.toLocaleString("en-NG")}`;
+}
+
+function paymentLabel(verificationStatus: RegistrationRecord["verificationStatus"]): string {
+  if (verificationStatus === "verified") return "Payment confirmed";
+  if (verificationStatus === "rejected") return "Payment needs attention";
+  return "Payment pending review";
 }
 
 function currentFeeLabel(amount: number | null): string {
@@ -122,6 +129,7 @@ export default function Registration() {
 
   const [record, setRecord] = useState<RegistrationRecord | null>(null);
   const [copied, setCopied] = useState(false);
+  const [accountNumberCopied, setAccountNumberCopied] = useState(false);
 
   // Optional payment-evidence upload
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -247,6 +255,19 @@ export default function Registration() {
       window.setTimeout(() => setCopied(false), 2500);
     } catch {
       toast.error("Could not copy automatically. Please select the ID and copy it manually.");
+    }
+  };
+
+  const copyAccountNumber = async () => {
+    if (!record) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(record.payment.accountNumber);
+      setAccountNumberCopied(true);
+      toast.success("Bank account number copied.");
+      window.setTimeout(() => setAccountNumberCopied(false), 2500);
+    } catch {
+      toast.error("Could not copy automatically. Please select the bank account number and copy it manually.");
     }
   };
 
@@ -457,6 +478,7 @@ export default function Registration() {
                 <span>Keep this reference safe — you can return later and continue from the same registration using the same ID or passkey.</span>
               </div>
 
+              <button className="button button--outline button--full" type="button" onClick={() => window.print()}><Printer size={17} /> Print / save camp pass</button>
               <button className="button button--ink button--full" onClick={() => setView("payment")}>Continue to payment <ArrowUpRight size={18} /></button>
               <button className="plain-action" onClick={() => setLocation("/")}>I’ll do this later — return to website</button>
             </div>
@@ -470,6 +492,7 @@ export default function Registration() {
                   <span className="section-label">Step 3 of 3 · {record.registrationNumber}</span>
                   <h2>You’re all<br /><em>set.</em></h2>
                   <p>{record.studentName}’s place at IVC 2026 is confirmed under {record.classGroup}. Your registration has been saved and the payment was reviewed successfully.</p>
+                  <button className="button button--outline button--full" type="button" onClick={() => window.print()}><Printer size={17} /> Print / save camp pass</button>
 
                   {record.whatsappGroupUrl ? (
                     <div className="group-card">
@@ -493,6 +516,7 @@ export default function Registration() {
                   <p>{record.familyCode
                     ? "Transfer the full amount using the family passkey as the reference. One receipt covers every participant in this family; our team confirms it in the dashboard."
                     : "Transfer the fee using the registration ID as the reference, then upload your receipt screenshot. Receipt upload is required before payment review."}</p>
+                  <button className="button button--outline button--full" type="button" onClick={() => window.print()}><Printer size={17} /> Print / save camp pass</button>
 
                   <div className="registration-number-card">
                     <small>{record.familyCode ? "Family passkey (use as payment reference)" : "Registration ID (use as payment reference)"}</small>
@@ -510,7 +534,13 @@ export default function Registration() {
                     <div className="payment-account">
                       <small>Pay to</small>
                       <strong>{record.payment.accountName}</strong>
-                      <span>{record.payment.accountNumber}</span>
+                      <div className="payment-account__number">
+                        <span>{record.payment.accountNumber}</span>
+                        <button type="button" onClick={copyAccountNumber} aria-label={accountNumberCopied ? "Bank account number copied" : "Copy bank account number"}>
+                          {accountNumberCopied ? <Check size={14} /> : <Copy size={14} />}
+                          {accountNumberCopied ? "Copied" : "Copy account number"}
+                        </button>
+                      </div>
                       <span>{record.payment.bank}</span>
                     </div>
                   </div>
@@ -593,6 +623,49 @@ export default function Registration() {
             </div>
           )}
         </div>
+
+        {record && (view === "success" || view === "payment") && (
+          <section className="camp-pass-print" aria-label="IVC camp registration pass">
+            <header className="camp-pass-print__header">
+              <div className="camp-pass-print__brand"><span>HA</span><strong>Hope-Alive Muslim Foundation</strong></div>
+              <div className="camp-pass-print__event"><strong>Islamic Vacation Course 2026</strong><span>Camping programme · Ilorin · 23–28 December 2026</span></div>
+            </header>
+            <h1>Registration invoice &amp; camp pass</h1>
+            <p className="camp-pass-print__notice">Present this pass at camp registration. Payment is not confirmed until the status below says “Payment confirmed.”</p>
+            <dl className="camp-pass-print__facts">
+              <dt>{record.familyCode ? "Family passkey" : "Registration ID"}</dt>
+              <dd>{record.familyCode ?? record.registrationNumber}</dd>
+              <dt>Registered</dt>
+              <dd>{new Date(record.registeredAt).toLocaleDateString("en-NG", { dateStyle: "long" })}</dd>
+              <dt>Payment status</dt>
+              <dd>{paymentLabel(record.verificationStatus)}</dd>
+              <dt>Receipt evidence</dt>
+              <dd>{record.receiptStatus === "submitted" ? "Uploaded · pending or completed review" : "Not uploaded"}</dd>
+            </dl>
+            <table className="camp-pass-print__participants">
+              <thead><tr><th>Participant</th><th>Class / group</th><th>Registration ID</th><th>Fee</th></tr></thead>
+              <tbody>
+                {(record.members ?? [{
+                  registrationNumber: record.registrationNumber,
+                  studentName: record.studentName,
+                  schoolClass: record.schoolClass,
+                  classGroup: record.classGroup,
+                  feeNgn: record.feeNgn,
+                }]).map(member => (
+                  <tr key={member.registrationNumber}>
+                    <td>{member.studentName}</td><td>{member.schoolClass} · {member.classGroup}</td>
+                    <td>{member.registrationNumber}</td><td>{member.feeNgn == null ? "—" : formatNaira(member.feeNgn)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr><th colSpan={3}>Total registration fee</th><th>{record.feeNgn == null ? "—" : formatNaira(record.feeNgn)}</th></tr></tfoot>
+            </table>
+            <footer className="camp-pass-print__footer">
+              <span>Camp check-in and entitlements are recorded by Hope-Alive staff after payment confirmation.</span>
+              <span>Questions? WhatsApp 08057782932</span>
+            </footer>
+          </section>
+        )}
       </main>
 
       <footer className="registration-footer">

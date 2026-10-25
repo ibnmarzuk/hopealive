@@ -28,7 +28,6 @@ function caller(ip = "203.0.113.5") {
   return appRouter.createCaller({
     req: { headers: { "x-forwarded-for": ip }, ip } as never,
     res: {} as never,
-    user: null,
     admin: null,
   });
 }
@@ -37,8 +36,15 @@ function adminCaller() {
   return appRouter.createCaller({
     req: { headers: {}, ip: "203.0.113.5" } as never,
     res: {} as never,
-    user: null,
-    admin: { email: "ibnmarzuk207@gmail.com" },
+    admin: { email: "ibnmarzuk207@gmail.com", role: "superadmin" },
+  });
+}
+
+function subAdminCaller() {
+  return appRouter.createCaller({
+    req: { headers: {}, ip: "203.0.113.5" } as never,
+    res: {} as never,
+    admin: { email: "team@hopealive", role: "subadmin" },
   });
 }
 
@@ -65,6 +71,7 @@ describe("registration.create — happy path", () => {
     expect(result.registrationNumber).toBe("MIDDLE-001");
     expect(result.classGroup).toBe("Middle Class");
     expect(result.emailStatus).toBe("sent");
+    expect(result.registeredAt).toBeInstanceOf(Date);
 
     const stored = await (await getStore()).findByNumber("MIDDLE-001");
     expect(stored).toMatchObject({
@@ -268,6 +275,7 @@ describe("registration.submitReceipt (manual — stores evidence, never auto-con
     const result = await caller().registration.submitReceipt(upload);
     expect(result.outcome).toBe("submitted");
     expect(result.verificationStatus).toBe("pending");
+    expect(result.entitlementsEligible).toBe(false);
     expect(result.receiptMessage).toMatch(/pending review/i);
     expect(result.whatsappGroupUrl).toBeNull();
 
@@ -349,7 +357,7 @@ describe("admin procedures", () => {
     expect(result.rows[0]).not.toHaveProperty("receiptImage");
   });
 
-  it("grants access via an admin session cookie with no Manus user", async () => {
+  it("grants access via a valid admin session cookie", async () => {
     const result = await adminCaller().registration.adminList();
     expect(Array.isArray(result.rows)).toBe(true);
   });
@@ -362,8 +370,36 @@ describe("admin procedures", () => {
     const stored = await (await getStore()).findById(id);
     expect(stored).toMatchObject({ paymentStatus: "verified", verificationStatus: "verified", verifiedBy: "admin" });
     expect(stored?.verifiedAt).toBeInstanceOf(Date);
+    expect((await adminCaller().registration.adminList()).rows[0].entitlementsEligible).toBe(true);
     expect(sendPaymentVerifiedEmail).toHaveBeenCalledOnce();
     expect(sendPaymentVerifiedEmail.mock.calls[0][1]).toMatchObject({ registrationNumber: "MIDDLE-001", groupUrl: "https://chat.whatsapp.com/test-group" });
+  });
+
+  it("requires confirmed payment before check-in", async () => {
+    const id = await firstId();
+    await expect(adminCaller().registration.adminUpdateCampStatus({ id, action: "check_in" })).rejects.toThrow(/confirm payment/i);
+    expect((await (await getStore()).findById(id))?.checkedInAt).toBeNull();
+  });
+
+  it("makes entitlements automatically eligible on payment confirmation and records check-in", async () => {
+    const id = await firstId();
+    await adminCaller().registration.adminUpdateStatus({ id, paymentStatus: "verified" });
+    expect((await adminCaller().registration.adminList()).rows[0].entitlementsEligible).toBe(true);
+
+    await expect(adminCaller().registration.adminUpdateCampStatus({ id, action: "check_in" })).resolves.toMatchObject({ success: true });
+    const stored = await (await getStore()).findById(id);
+    expect(stored).toMatchObject({ checkedInBy: "ibnmarzuk207@gmail.com" });
+    expect(stored?.checkedInAt).toBeInstanceOf(Date);
+    await expect(adminCaller().registration.adminUpdateStatus({ id, paymentStatus: "rejected" })).rejects.toThrow(/after camp check-in/i);
+  });
+
+  it("allows a sub-admin to view, verify payment, and check in but not make other status changes", async () => {
+    const id = await firstId();
+    expect((await subAdminCaller().registration.adminList()).rows).toHaveLength(1);
+    await expect(subAdminCaller().registration.adminUpdateStatus({ id, paymentStatus: "pending_payment" })).rejects.toThrow(/only confirm or reject/i);
+    await expect(subAdminCaller().registration.adminUpdateStatus({ id, paymentStatus: "verified" })).resolves.toMatchObject({ success: true });
+    expect((await subAdminCaller().registration.adminList()).rows[0].entitlementsEligible).toBe(true);
+    await expect(subAdminCaller().registration.adminUpdateCampStatus({ id, action: "check_in" })).resolves.toMatchObject({ success: true });
   });
 
   it("does not resend the confirmation email when already verified", async () => {
@@ -421,17 +457,21 @@ describe("auth.adminLogin", () => {
   const ORIGINAL = {
     email: process.env.ADMIN_EMAIL,
     password: process.env.ADMIN_PASSWORD,
+    subEmail: process.env.SUB_ADMIN_EMAIL,
+    subPassword: process.env.SUB_ADMIN_PASSWORD,
     secret: process.env.ADMIN_SESSION_SECRET,
   };
 
   beforeEach(() => {
     process.env.ADMIN_EMAIL = "ibnmarzuk207@gmail.com";
     process.env.ADMIN_PASSWORD = "Abdurry207";
+    process.env.SUB_ADMIN_EMAIL = "team@hopealive";
+    process.env.SUB_ADMIN_PASSWORD = "sub-admin-test-password";
     process.env.ADMIN_SESSION_SECRET = "test-secret-value-long-enough";
     resetRateLimits();
   });
   afterEach(() => {
-    for (const [key, value] of [["ADMIN_EMAIL", ORIGINAL.email], ["ADMIN_PASSWORD", ORIGINAL.password], ["ADMIN_SESSION_SECRET", ORIGINAL.secret]] as const) {
+    for (const [key, value] of [["ADMIN_EMAIL", ORIGINAL.email], ["ADMIN_PASSWORD", ORIGINAL.password], ["ADMIN_SESSION_SECRET", ORIGINAL.secret], ["SUB_ADMIN_EMAIL", ORIGINAL.subEmail], ["SUB_ADMIN_PASSWORD", ORIGINAL.subPassword]] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
@@ -444,7 +484,6 @@ describe("auth.adminLogin", () => {
         cookie: (name: string, value: string) => cookies.push({ name, value }),
         clearCookie: (name: string) => cookies.push({ name, value: "" }),
       } as never,
-      user: null,
       admin: null,
     });
   }
@@ -452,8 +491,21 @@ describe("auth.adminLogin", () => {
   it("sets a session cookie for correct credentials", async () => {
     const cookies: Array<{ name: string; value: string }> = [];
     const result = await loginCaller(cookies).auth.adminLogin({ email: "ibnmarzuk207@gmail.com", password: "Abdurry207" });
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ success: true, role: "superadmin" });
     expect(cookies.some(c => c.name === "hopealive_admin" && c.value.length > 0)).toBe(true);
+  });
+
+  it("sets a sub-admin session for the limited account", async () => {
+    const cookies: Array<{ name: string; value: string }> = [];
+    const result = await loginCaller(cookies).auth.adminLogin({ email: "team@hopealive", password: "sub-admin-test-password" });
+    expect(result).toEqual({ success: true, role: "subadmin" });
+    const sessionToken = cookies.find(cookie => cookie.name === "hopealive_admin")?.value;
+    expect(sessionToken).toBeTruthy();
+    const { readAdminSession } = await import("./_core/adminAuth");
+    expect(await readAdminSession({ headers: { cookie: `hopealive_admin=${sessionToken}` } } as never)).toMatchObject({
+      email: "team@hopealive",
+      role: "subadmin",
+    });
   });
 
   it("rejects wrong credentials and sets no cookie", async () => {

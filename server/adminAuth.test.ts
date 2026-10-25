@@ -11,6 +11,8 @@ import {
 const ORIGINAL = {
   email: process.env.ADMIN_EMAIL,
   password: process.env.ADMIN_PASSWORD,
+  subEmail: process.env.SUB_ADMIN_EMAIL,
+  subPassword: process.env.SUB_ADMIN_PASSWORD,
   secret: process.env.ADMIN_SESSION_SECRET,
 };
 
@@ -24,7 +26,13 @@ function setEnv(email?: string, password?: string, secret?: string) {
 }
 
 beforeEach(() => setEnv("ibnmarzuk207@gmail.com", "Abdurry207", "test-secret-value-long-enough"));
-afterEach(() => setEnv(ORIGINAL.email, ORIGINAL.password, ORIGINAL.secret));
+afterEach(() => {
+  setEnv(ORIGINAL.email, ORIGINAL.password, ORIGINAL.secret);
+  if (ORIGINAL.subEmail === undefined) delete process.env.SUB_ADMIN_EMAIL;
+  else process.env.SUB_ADMIN_EMAIL = ORIGINAL.subEmail;
+  if (ORIGINAL.subPassword === undefined) delete process.env.SUB_ADMIN_PASSWORD;
+  else process.env.SUB_ADMIN_PASSWORD = ORIGINAL.subPassword;
+});
 
 /** Builds a fake Express request carrying a cookie header. */
 const reqWithCookie = (cookie?: string) => ({ headers: cookie ? { cookie } : {} }) as never;
@@ -48,33 +56,48 @@ describe("configuration", () => {
 
 describe("verifyAdminCredentials", () => {
   it("accepts the exact credentials", () => {
-    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "Abdurry207")).toBe(true);
+    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "Abdurry207")).toBe("superadmin");
   });
 
   it("is case-insensitive and whitespace-tolerant on the email only", () => {
-    expect(verifyAdminCredentials("  IBNMarzuk207@Gmail.com ", "Abdurry207")).toBe(true);
+    expect(verifyAdminCredentials("  IBNMarzuk207@Gmail.com ", "Abdurry207")).toBe("superadmin");
   });
 
   it("rejects a wrong password (case-sensitive)", () => {
-    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "abdurry207")).toBe(false);
-    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "wrong")).toBe(false);
+    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "abdurry207")).toBeNull();
+    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "wrong")).toBeNull();
   });
 
   it("rejects a wrong email", () => {
-    expect(verifyAdminCredentials("someone@else.com", "Abdurry207")).toBe(false);
+    expect(verifyAdminCredentials("someone@else.com", "Abdurry207")).toBeNull();
   });
 
   it("rejects everything when login is not configured", () => {
     setEnv(undefined, undefined, undefined);
-    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "Abdurry207")).toBe(false);
+    expect(verifyAdminCredentials("ibnmarzuk207@gmail.com", "Abdurry207")).toBeNull();
+  });
+
+  it("distinguishes the configured sub-admin credentials", () => {
+    process.env.SUB_ADMIN_EMAIL = "team@hopealive";
+    process.env.SUB_ADMIN_PASSWORD = "sub-admin-test-password";
+    expect(verifyAdminCredentials("team@hopealive", "sub-admin-test-password")).toBe("subadmin");
+    expect(verifyAdminCredentials("team@hopealive", "wrong")).toBeNull();
   });
 });
 
 describe("session cookie round-trip", () => {
   it("signs a token the reader accepts", async () => {
-    const token = await signAdminSession("ibnmarzuk207@gmail.com");
+    const token = await signAdminSession("ibnmarzuk207@gmail.com", "superadmin");
     const session = await readAdminSession(reqWithCookie(`${ADMIN_COOKIE}=${token}`));
-    expect(session).toEqual({ email: "ibnmarzuk207@gmail.com" });
+    expect(session).toEqual({ email: "ibnmarzuk207@gmail.com", role: "superadmin" });
+  });
+
+  it("preserves the role in a sub-admin session", async () => {
+    const token = await signAdminSession("team@hopealive", "subadmin");
+    expect(await readAdminSession(reqWithCookie(`${ADMIN_COOKIE}=${token}`))).toEqual({
+      email: "team@hopealive",
+      role: "subadmin",
+    });
   });
 
   it("returns null with no cookie", async () => {

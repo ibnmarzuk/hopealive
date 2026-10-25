@@ -1,4 +1,3 @@
-import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
@@ -10,34 +9,23 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
-const requireUser = t.middleware(async opts => {
-  const { ctx, next } = opts;
-
-  if (!ctx.user) {
-    throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
-  }
-
-  return next({
-    ctx: {
-      ...ctx,
-      user: ctx.user,
-    },
-  });
-});
-
-export const protectedProcedure = t.procedure.use(requireUser);
-
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
-    // Admin access is granted by EITHER a Manus admin user OR a verified
-    // email/password admin session cookie (ctx.admin).
-    const isAdmin = ctx.user?.role === "admin" || Boolean(ctx.admin);
-    if (!isAdmin) {
-      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    if (!ctx.admin) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Administrator access is required." });
     }
 
+    return next({ ctx });
+  }),
+);
+
+export const superAdminProcedure = t.procedure.use(
+  t.middleware(async ({ ctx, next }) => {
+    if (ctx.admin?.role !== "superadmin") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Super-admin access is required for this action." });
+    }
     return next({ ctx });
   }),
 );

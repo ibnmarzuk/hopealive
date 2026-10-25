@@ -15,6 +15,20 @@
       "when": 1792849096932,
       "tag": "0001_tired_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792934287582,
+      "tag": "0002_nosy_sumo",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792938699126,
+      "tag": "0003_rename-entitlement-eligibility-fields",
+      "breakpoints": true
     }
   ]
 }

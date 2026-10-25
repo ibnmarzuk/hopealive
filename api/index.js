@@ -2,569 +2,6 @@
 import express from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 
-// shared/const.ts
-var COOKIE_NAME = "webdev_app_session";
-var ONE_YEAR_MS = 1e3 * 60 * 60 * 24 * 365;
-var AXIOS_TIMEOUT_MS = 3e4;
-var UNAUTHED_ERR_MSG = "Please login (10001)";
-var NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
-var OAUTH_STATE_COOKIE = "__Host-oauth_state";
-var decodeOAuthState = (state) => {
-  let decoded;
-  try {
-    decoded = atob(state);
-  } catch {
-    return { redirectUri: "" };
-  }
-  try {
-    const parsed = JSON.parse(decoded);
-    if (parsed && typeof parsed.redirectUri === "string") return parsed;
-  } catch {
-  }
-  return { redirectUri: decoded };
-};
-
-// server/_core/oauth.ts
-import { parse as parseCookieHeader2 } from "cookie";
-
-// server/db.ts
-import { eq } from "drizzle-orm";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-
-// drizzle/schema.ts
-import {
-  integer,
-  jsonb,
-  boolean,
-  pgEnum,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-  varchar
-} from "drizzle-orm/pg-core";
-var userRole = pgEnum("user_role", ["user", "admin"]);
-var paymentStatus = pgEnum("payment_status", ["pending_payment", "payment_claimed", "under_review", "verified", "rejected", "completed"]);
-var receiptStatus = pgEnum("receipt_status", ["not_submitted", "submitted"]);
-var verificationStatus = pgEnum("verification_status", ["pending", "verified", "rejected", "clarification"]);
-var emailStatus = pgEnum("email_status", ["pending", "sent", "failed", "skipped"]);
-var verifiedBy = pgEnum("verified_by", ["ai", "admin"]);
-var users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
-  name: text("name"),
-  email: varchar("email", { length: 320 }),
-  loginMethod: varchar("loginMethod", { length: 64 }),
-  role: userRole("role").default("user").notNull(),
-  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
-  lastSignedIn: timestamp("lastSignedIn", { withTimezone: true }).defaultNow().notNull()
-});
-var registrationCounters = pgTable("registration_counters", {
-  id: serial("id").primaryKey(),
-  classGroup: varchar("classGroup", { length: 32 }).notNull().unique(),
-  lastNumber: integer("lastNumber").notNull().default(0)
-});
-var registrations = pgTable("registrations", {
-  id: serial("id").primaryKey(),
-  studentName: varchar("studentName", { length: 160 }).notNull(),
-  guardianEmail: varchar("guardianEmail", { length: 320 }),
-  guardianPhone: varchar("guardianPhone", { length: 32 }).notNull(),
-  schoolClass: varchar("schoolClass", { length: 64 }).notNull(),
-  classGroup: varchar("classGroup", { length: 32 }).notNull(),
-  registrationNumber: varchar("registrationNumber", { length: 32 }).notNull().unique(),
-  dedupeKey: varchar("dedupeKey", { length: 64 }).unique(),
-  /** Shared family passkey for participants registered and paid together. */
-  familyCode: varchar("familyCode", { length: 16 }),
-  familyPaymentLead: boolean("familyPaymentLead").notNull().default(false),
-  /** Actual bank-confirmed amount, recorded once on the family's lead row. */
-  verifiedAmountNgn: integer("verifiedAmountNgn"),
-  paymentStatus: paymentStatus("paymentStatus").notNull().default("pending_payment"),
-  receiptStatus: receiptStatus("receiptStatus").notNull().default("not_submitted"),
-  verificationStatus: verificationStatus("verificationStatus").notNull().default("pending"),
-  emailStatus: emailStatus("emailStatus").notNull().default("pending"),
-  emailMessageId: varchar("emailMessageId", { length: 64 }),
-  emailSentAt: timestamp("emailSentAt", { withTimezone: true }),
-  emailError: varchar("emailError", { length: 255 }),
-  receiptImage: text("receiptImage"),
-  receiptSubmittedAt: timestamp("receiptSubmittedAt", { withTimezone: true }),
-  receiptAttempts: integer("receiptAttempts").notNull().default(0),
-  receiptAnalysis: jsonb("receiptAnalysis"),
-  verifiedAt: timestamp("verifiedAt", { withTimezone: true }),
-  verifiedBy: verifiedBy("verifiedBy"),
-  notes: text("notes"),
-  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull()
-});
-
-// server/_core/env.ts
-var ENV = {
-  get appId() {
-    return process.env.MANUS_PROJECT_ID ?? "";
-  },
-  get cookieSecret() {
-    return process.env.MANUS_JWT_SECRET ?? "";
-  },
-  get databaseUrl() {
-    return process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? "";
-  },
-  get oAuthServerUrl() {
-    return process.env.MANUS_OAUTH_API_URL ?? "";
-  },
-  // Preserve the legacy hint when supplied; otherwise roles remain application data.
-  get ownerOpenId() {
-    return process.env.OWNER_OPEN_ID ?? "";
-  },
-  get isProduction() {
-    return process.env.NODE_ENV === "production";
-  },
-  get forgeApiUrl() {
-    return process.env.MANUS_API_URL ?? "";
-  },
-  get forgeApiKey() {
-    return process.env.MANUS_API_KEY ?? "";
-  },
-  // --- Email delivery (Resend) -------------------------------------------
-  // Server-only. These are never exposed through publicConfig.ts and must not
-  // be referenced from client/ code.
-  /** Resend API key, `re_...`. Server-side only. */
-  get resendApiKey() {
-    return process.env.RESEND_API_KEY ?? "";
-  },
-  /** Verified sender, e.g. `Hope-Alive <ivc@your-verified-domain.org>`. */
-  get resendFromEmail() {
-    return process.env.RESEND_FROM_EMAIL ?? "";
-  },
-  /** Optional Reply-To shown to recipients, e.g. a monitored inbox. */
-  get resendReplyTo() {
-    return process.env.RESEND_REPLY_TO ?? "";
-  },
-  /** Public base URL of this site, used to build links inside emails. */
-  get appUrl() {
-    return (process.env.APP_URL ?? "").replace(/\/+$/, "");
-  },
-  // --- Payment / registration -------------------------------------------
-  /** Group invite link. Returned to the browser only for verified registrations. */
-  get whatsappGroupUrl() {
-    return process.env.WHATSAPP_GROUP_URL ?? "";
-  },
-  // --- Admin login (email + password) -----------------------------------
-  // Server-only. Never exposed through publicConfig.ts. See server/_core/adminAuth.ts.
-  get adminEmail() {
-    return process.env.ADMIN_EMAIL ?? "";
-  },
-  get adminPassword() {
-    return process.env.ADMIN_PASSWORD ?? "";
-  },
-  /** Secret used to sign the admin session cookie. Use a long random string. */
-  get adminSessionSecret() {
-    return process.env.ADMIN_SESSION_SECRET ?? "";
-  }
-};
-
-// server/db.ts
-var _db = null;
-async function getDb() {
-  const connectionString = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
-  if (!_db && connectionString) {
-    try {
-      const client2 = postgres(connectionString, { prepare: false, max: 1, connect_timeout: 10 });
-      _db = drizzle(client2);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
-  }
-  return _db;
-}
-async function upsertUser(user) {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database is not available");
-  }
-  try {
-    const values = {
-      openId: user.openId
-    };
-    const updateSet = {};
-    const textFields = ["name", "email", "loginMethod"];
-    const assignNullable = (field) => {
-      const value = user[field];
-      if (value === void 0) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-    textFields.forEach(assignNullable);
-    if (user.lastSignedIn !== void 0) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
-    }
-    if (user.role !== void 0) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = "admin";
-      updateSet.role = "admin";
-    }
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = /* @__PURE__ */ new Date();
-    }
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = /* @__PURE__ */ new Date();
-    }
-    await db.insert(users).values(values).onConflictDoUpdate({
-      target: users.openId,
-      set: updateSet
-    });
-  } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
-    throw error;
-  }
-}
-async function getUserByOpenId(openId) {
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return void 0;
-  }
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  return result.length > 0 ? result[0] : void 0;
-}
-
-// server/_core/cookies.ts
-function getSessionCookieOptions(_req) {
-  return { httpOnly: true, path: "/", sameSite: "none", secure: true };
-}
-
-// shared/_core/errors.ts
-var HttpError = class extends Error {
-  constructor(statusCode, message) {
-    super(message);
-    this.statusCode = statusCode;
-    this.name = "HttpError";
-  }
-};
-var ForbiddenError = (msg) => new HttpError(403, msg);
-
-// server/_core/sdk.ts
-import axios from "axios";
-import { parse as parseCookieHeader } from "cookie";
-import { SignJWT, jwtVerify } from "jose";
-var isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
-var EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
-var GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
-var GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfoWithJwt`;
-var OAuthService = class {
-  constructor(client2) {
-    this.client = client2;
-    if (ENV.oAuthServerUrl) {
-      console.log("[OAuth] Initialized with baseURL:", ENV.oAuthServerUrl);
-    } else {
-      console.warn("[OAuth] MANUS_OAUTH_API_URL is not set.");
-    }
-  }
-  decodeState(state) {
-    return decodeOAuthState(state).redirectUri;
-  }
-  async getTokenByCode(code, state) {
-    const payload = {
-      clientId: ENV.appId,
-      grantType: "authorization_code",
-      code,
-      redirectUri: this.decodeState(state)
-    };
-    const { data } = await this.client.post(
-      EXCHANGE_TOKEN_PATH,
-      payload
-    );
-    return data;
-  }
-  async getUserInfoByToken(token) {
-    const { data } = await this.client.post(
-      GET_USER_INFO_PATH,
-      {
-        accessToken: token.accessToken
-      }
-    );
-    return data;
-  }
-};
-var createOAuthHttpClient = () => axios.create({
-  baseURL: ENV.oAuthServerUrl,
-  timeout: AXIOS_TIMEOUT_MS
-});
-var SDKServer = class {
-  client;
-  oauthService;
-  constructor(client2 = createOAuthHttpClient()) {
-    this.client = client2;
-    this.oauthService = new OAuthService(this.client);
-  }
-  deriveLoginMethod(platforms, fallback) {
-    if (fallback && fallback.length > 0) return fallback;
-    if (!Array.isArray(platforms) || platforms.length === 0) return null;
-    const set = new Set(
-      platforms.filter((p) => typeof p === "string")
-    );
-    if (set.has("REGISTERED_PLATFORM_EMAIL")) return "email";
-    if (set.has("REGISTERED_PLATFORM_GOOGLE")) return "google";
-    if (set.has("REGISTERED_PLATFORM_APPLE")) return "apple";
-    if (set.has("REGISTERED_PLATFORM_MICROSOFT") || set.has("REGISTERED_PLATFORM_AZURE"))
-      return "microsoft";
-    if (set.has("REGISTERED_PLATFORM_GITHUB")) return "github";
-    const first = Array.from(set)[0];
-    return first ? first.toLowerCase() : null;
-  }
-  /**
-   * Exchange OAuth authorization code for access token
-   * @example
-   * const tokenResponse = await sdk.exchangeCodeForToken(code, state);
-   */
-  async exchangeCodeForToken(code, state) {
-    return this.oauthService.getTokenByCode(code, state);
-  }
-  /**
-   * Get user information using access token
-   * @example
-   * const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
-   */
-  async getUserInfo(accessToken) {
-    const data = await this.oauthService.getUserInfoByToken({
-      accessToken
-    });
-    const loginMethod = this.deriveLoginMethod(
-      data?.platforms,
-      data?.platform ?? null
-    );
-    return {
-      ...data,
-      platform: loginMethod,
-      loginMethod
-    };
-  }
-  parseCookies(cookieHeader) {
-    if (!cookieHeader) {
-      return /* @__PURE__ */ new Map();
-    }
-    const parsed = parseCookieHeader(cookieHeader);
-    return new Map(Object.entries(parsed));
-  }
-  getSessionSecret() {
-    const secret = ENV.cookieSecret;
-    if (!secret) throw new Error("MANUS_JWT_SECRET is unavailable");
-    return new TextEncoder().encode(secret);
-  }
-  /**
-   * Create a session token for a Manus user openId
-   * @example
-   * const sessionToken = await sdk.createSessionToken(userInfo.openId);
-   */
-  async createSessionToken(openId, options = {}) {
-    return this.signSession(
-      {
-        openId,
-        appId: ENV.appId,
-        name: options.name || ""
-      },
-      options
-    );
-  }
-  async signSession(payload, options = {}) {
-    const issuedAt = Date.now();
-    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
-    const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1e3);
-    const secretKey2 = this.getSessionSecret();
-    return new SignJWT({
-      openId: payload.openId,
-      appId: payload.appId,
-      name: payload.name
-    }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setExpirationTime(expirationSeconds).sign(secretKey2);
-  }
-  async verifySession(cookieValue) {
-    if (!cookieValue) {
-      console.warn("[Auth] Missing session cookie");
-      return null;
-    }
-    try {
-      const secretKey2 = this.getSessionSecret();
-      const { payload } = await jwtVerify(cookieValue, secretKey2, {
-        algorithms: ["HS256"]
-      });
-      const { openId, appId, name } = payload;
-      if (!isNonEmptyString(openId) || (!isNonEmptyString(appId) || appId !== ENV.appId) || typeof name !== "string") {
-        console.warn("[Auth] Session payload missing required fields");
-        return null;
-      }
-      return {
-        openId,
-        appId,
-        name
-      };
-    } catch (error) {
-      console.warn("[Auth] Session verification failed", String(error));
-      return null;
-    }
-  }
-  async getUserInfoWithJwt(jwtToken) {
-    const payload = {
-      jwtToken,
-      projectId: ENV.appId
-    };
-    const { data } = await this.client.post(
-      GET_USER_INFO_WITH_JWT_PATH,
-      payload
-    );
-    const loginMethod = this.deriveLoginMethod(
-      data?.platforms,
-      data?.platform ?? null
-    );
-    return {
-      ...data,
-      platform: loginMethod,
-      loginMethod
-    };
-  }
-  async authenticateRequest(req) {
-    const cookies = this.parseCookies(req.headers.cookie);
-    let sessionToken = cookies.get(COOKIE_NAME);
-    if (!sessionToken && req.path.startsWith("/api/scheduled/")) {
-      const ticket = cookies.get("app_session_id");
-      const identity = await this.verifySession(ticket);
-      if (identity?.openId.startsWith(CRON_OPEN_ID_PREFIX)) sessionToken = ticket;
-    }
-    if (!sessionToken) {
-      const authHeader = req.headers.authorization;
-      if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
-        sessionToken = authHeader.slice(7);
-      }
-    }
-    const session = await this.verifySession(sessionToken);
-    if (!session) {
-      throw ForbiddenError("Invalid session cookie");
-    }
-    if (session.openId.startsWith(CRON_OPEN_ID_PREFIX)) {
-      const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-      const taskUid = userInfo.taskUid ?? null;
-      if (!taskUid) {
-        throw ForbiddenError("Cron session missing task_uid");
-      }
-      return buildCronUser(userInfo);
-    }
-    const sessionUserId = session.openId;
-    const signedInAt = /* @__PURE__ */ new Date();
-    let user = await getUserByOpenId(sessionUserId);
-    if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-        await upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-          lastSignedIn: signedInAt
-        });
-        user = await getUserByOpenId(userInfo.openId);
-      } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
-        throw ForbiddenError("Failed to sync user info");
-      }
-    }
-    if (!user) {
-      throw ForbiddenError("User not found");
-    }
-    await upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt
-    });
-    return user;
-  }
-};
-var CRON_OPEN_ID_PREFIX = "cron_";
-function buildCronUser(userInfo) {
-  const now = /* @__PURE__ */ new Date();
-  return {
-    id: -1,
-    openId: userInfo.openId,
-    name: userInfo.name || "Manus Scheduled Task",
-    email: null,
-    loginMethod: null,
-    role: "user",
-    createdAt: now,
-    updatedAt: now,
-    lastSignedIn: now,
-    taskUid: userInfo.taskUid ?? void 0,
-    isCron: true
-  };
-}
-var sdk = new SDKServer();
-
-// server/_core/oauth.ts
-function getQueryParam(req, key) {
-  const value = req.query[key];
-  return typeof value === "string" ? value : void 0;
-}
-function registerOAuthRoutes(app2) {
-  app2.get("/api/oauth/callback", async (req, res) => {
-    const code = getQueryParam(req, "code");
-    const state = getQueryParam(req, "state");
-    if (!code || !state) {
-      res.status(400).json({ error: "code and state are required" });
-      return;
-    }
-    const { nonce } = decodeOAuthState(state);
-    const expectedNonce = parseCookieHeader2(req.headers.cookie ?? "")[OAUTH_STATE_COOKIE];
-    if (!nonce || nonce !== expectedNonce) {
-      res.status(403).json({ error: "invalid oauth state" });
-      return;
-    }
-    res.clearCookie(OAUTH_STATE_COOKIE, { path: "/", secure: true, sameSite: "none" });
-    try {
-      const tokenResponse = await sdk.exchangeCodeForToken(code, state);
-      const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
-      if (!userInfo.openId) {
-        res.status(400).json({ error: "openId missing from user info" });
-        return;
-      }
-      await upsertUser({
-        openId: userInfo.openId,
-        name: userInfo.name || null,
-        email: userInfo.email ?? null,
-        loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-        lastSignedIn: /* @__PURE__ */ new Date()
-      });
-      const sessionToken = await sdk.createSessionToken(userInfo.openId, {
-        name: userInfo.name || "",
-        expiresInMs: ONE_YEAR_MS
-      });
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-      res.redirect(302, "/");
-    } catch (error) {
-      console.error("[OAuth] Callback failed", error instanceof Error ? error.message : "unknown error");
-      res.status(500).json({ error: "OAuth callback failed" });
-    }
-  });
-}
-
-// server/_core/publicConfig.ts
-function publicPlatformConfig(env = process.env) {
-  return {
-    projectId: env.MANUS_PROJECT_ID ?? "",
-    oauthPortalUrl: env.MANUS_OAUTH_PORTAL_URL ?? "",
-    apiUrl: env.MANUS_API_URL ?? "",
-    apiBrowserKey: env.MANUS_API_BROWSER_KEY ?? ""
-  };
-}
-function publicPlatformScript(env = process.env) {
-  const json = JSON.stringify(publicPlatformConfig(env)).replaceAll("<", "\\u003c");
-  return `window.__MANUS_CONFIG__=${json};`;
-}
-
 // shared/registration.ts
 import { z } from "zod";
 var CLASS_GROUPS = {
@@ -680,14 +117,104 @@ var receiptUploadSchema = registrationLookupSchema.extend({
 });
 
 // server/routers.ts
-import { TRPCError as TRPCError3 } from "@trpc/server";
+import { TRPCError as TRPCError2 } from "@trpc/server";
 import { createHash, randomBytes } from "node:crypto";
-import { z as z3 } from "zod";
+import { z as z2 } from "zod";
 
 // server/registrationStore.ts
-import { desc, eq as eq2 } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
+
+// drizzle/schema.ts
+import {
+  integer,
+  jsonb,
+  boolean,
+  pgEnum,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  varchar
+} from "drizzle-orm/pg-core";
+var userRole = pgEnum("user_role", ["user", "admin"]);
+var paymentStatus = pgEnum("payment_status", ["pending_payment", "payment_claimed", "under_review", "verified", "rejected", "completed"]);
+var receiptStatus = pgEnum("receipt_status", ["not_submitted", "submitted"]);
+var verificationStatus = pgEnum("verification_status", ["pending", "verified", "rejected", "clarification"]);
+var emailStatus = pgEnum("email_status", ["pending", "sent", "failed", "skipped"]);
+var verifiedBy = pgEnum("verified_by", ["ai", "admin"]);
+var users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  openId: varchar("openId", { length: 64 }).notNull().unique(),
+  name: text("name"),
+  email: varchar("email", { length: 320 }),
+  loginMethod: varchar("loginMethod", { length: 64 }),
+  role: userRole("role").default("user").notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
+  lastSignedIn: timestamp("lastSignedIn", { withTimezone: true }).defaultNow().notNull()
+});
+var registrationCounters = pgTable("registration_counters", {
+  id: serial("id").primaryKey(),
+  classGroup: varchar("classGroup", { length: 32 }).notNull().unique(),
+  lastNumber: integer("lastNumber").notNull().default(0)
+});
+var registrations = pgTable("registrations", {
+  id: serial("id").primaryKey(),
+  studentName: varchar("studentName", { length: 160 }).notNull(),
+  guardianEmail: varchar("guardianEmail", { length: 320 }),
+  guardianPhone: varchar("guardianPhone", { length: 32 }).notNull(),
+  schoolClass: varchar("schoolClass", { length: 64 }).notNull(),
+  classGroup: varchar("classGroup", { length: 32 }).notNull(),
+  registrationNumber: varchar("registrationNumber", { length: 32 }).notNull().unique(),
+  dedupeKey: varchar("dedupeKey", { length: 64 }).unique(),
+  /** Shared family passkey for participants registered and paid together. */
+  familyCode: varchar("familyCode", { length: 16 }),
+  familyPaymentLead: boolean("familyPaymentLead").notNull().default(false),
+  /** Actual bank-confirmed amount, recorded once on the family's lead row. */
+  verifiedAmountNgn: integer("verifiedAmountNgn"),
+  paymentStatus: paymentStatus("paymentStatus").notNull().default("pending_payment"),
+  receiptStatus: receiptStatus("receiptStatus").notNull().default("not_submitted"),
+  verificationStatus: verificationStatus("verificationStatus").notNull().default("pending"),
+  emailStatus: emailStatus("emailStatus").notNull().default("pending"),
+  emailMessageId: varchar("emailMessageId", { length: 64 }),
+  emailSentAt: timestamp("emailSentAt", { withTimezone: true }),
+  emailError: varchar("emailError", { length: 255 }),
+  receiptImage: text("receiptImage"),
+  receiptSubmittedAt: timestamp("receiptSubmittedAt", { withTimezone: true }),
+  receiptAttempts: integer("receiptAttempts").notNull().default(0),
+  receiptAnalysis: jsonb("receiptAnalysis"),
+  verifiedAt: timestamp("verifiedAt", { withTimezone: true }),
+  verifiedBy: verifiedBy("verifiedBy"),
+  checkedInAt: timestamp("checkedInAt", { withTimezone: true }),
+  checkedInBy: varchar("checkedInBy", { length: 320 }),
+  entitlementsEligibleAt: timestamp("entitlementsEligibleAt", { withTimezone: true }),
+  entitlementsEligibleBy: varchar("entitlementsEligibleBy", { length: 320 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull()
+});
+
+// server/db.ts
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+var _db = null;
+async function getDb() {
+  const connectionString = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+  if (!_db && connectionString) {
+    try {
+      const client2 = postgres(connectionString, { prepare: false, max: 1, connect_timeout: 10 });
+      _db = drizzle(client2);
+    } catch (error) {
+      console.warn("[Database] Failed to connect:", error);
+      _db = null;
+    }
+  }
+  return _db;
+}
+
+// server/registrationStore.ts
 var DuplicateRegistrationError = class extends Error {
   constructor() {
     super("Duplicate registration");
@@ -714,6 +241,10 @@ var ADMIN_COLUMNS = {
   receiptAttempts: registrations.receiptAttempts,
   verifiedAt: registrations.verifiedAt,
   verifiedBy: registrations.verifiedBy,
+  checkedInAt: registrations.checkedInAt,
+  checkedInBy: registrations.checkedInBy,
+  entitlementsEligibleAt: registrations.entitlementsEligibleAt,
+  entitlementsEligibleBy: registrations.entitlementsEligibleBy,
   notes: registrations.notes,
   createdAt: registrations.createdAt
 };
@@ -728,16 +259,16 @@ var PostgresStore = class {
     this.db = db;
   }
   async findByDedupeKey(dedupeKey) {
-    const rows = await this.db.select({ registrationNumber: registrations.registrationNumber }).from(registrations).where(eq2(registrations.dedupeKey, dedupeKey)).limit(1);
+    const rows = await this.db.select({ registrationNumber: registrations.registrationNumber }).from(registrations).where(eq(registrations.dedupeKey, dedupeKey)).limit(1);
     return rows[0] ?? null;
   }
   async create(data) {
     try {
       return await this.db.transaction(async (tx) => {
         await tx.insert(registrationCounters).values({ classGroup: data.classGroup, lastNumber: 0 }).onConflictDoNothing({ target: registrationCounters.classGroup });
-        const [counter] = await tx.select({ lastNumber: registrationCounters.lastNumber }).from(registrationCounters).where(eq2(registrationCounters.classGroup, data.classGroup)).for("update");
+        const [counter] = await tx.select({ lastNumber: registrationCounters.lastNumber }).from(registrationCounters).where(eq(registrationCounters.classGroup, data.classGroup)).for("update");
         const nextNumber = Number(counter?.lastNumber ?? 0) + 1;
-        await tx.update(registrationCounters).set({ lastNumber: nextNumber }).where(eq2(registrationCounters.classGroup, data.classGroup));
+        await tx.update(registrationCounters).set({ lastNumber: nextNumber }).where(eq(registrationCounters.classGroup, data.classGroup));
         const allocated = `${data.prefix}-${String(nextNumber).padStart(3, "0")}`;
         await tx.insert(registrations).values({
           studentName: data.studentName,
@@ -762,7 +293,7 @@ var PostgresStore = class {
         const nextNumbers = {};
         for (const classGroup of [...new Set(data.map((item) => item.classGroup))].sort()) {
           await tx.insert(registrationCounters).values({ classGroup, lastNumber: 0 }).onConflictDoNothing({ target: registrationCounters.classGroup });
-          const [counter] = await tx.select({ lastNumber: registrationCounters.lastNumber }).from(registrationCounters).where(eq2(registrationCounters.classGroup, classGroup)).for("update");
+          const [counter] = await tx.select({ lastNumber: registrationCounters.lastNumber }).from(registrationCounters).where(eq(registrationCounters.classGroup, classGroup)).for("update");
           nextNumbers[classGroup] = Number(counter?.lastNumber ?? 0);
         }
         const numbered = data.map((item) => {
@@ -770,7 +301,7 @@ var PostgresStore = class {
           return { ...item, registrationNumber: `${item.prefix}-${String(next).padStart(3, "0")}` };
         });
         for (const [classGroup, lastNumber] of Object.entries(nextNumbers)) {
-          await tx.update(registrationCounters).set({ lastNumber }).where(eq2(registrationCounters.classGroup, classGroup));
+          await tx.update(registrationCounters).set({ lastNumber }).where(eq(registrationCounters.classGroup, classGroup));
         }
         await tx.insert(registrations).values(numbered.map((item) => ({
           studentName: item.studentName,
@@ -794,34 +325,34 @@ var PostgresStore = class {
     }
   }
   async findByNumber(registrationNumber) {
-    const rows = await this.db.select().from(registrations).where(eq2(registrations.registrationNumber, registrationNumber)).limit(1);
+    const rows = await this.db.select().from(registrations).where(eq(registrations.registrationNumber, registrationNumber)).limit(1);
     return rows[0] ?? null;
   }
   async findById(id) {
-    const rows = await this.db.select().from(registrations).where(eq2(registrations.id, id)).limit(1);
+    const rows = await this.db.select().from(registrations).where(eq(registrations.id, id)).limit(1);
     return rows[0] ?? null;
   }
   async findByFamilyCode(familyCode) {
-    return this.db.select().from(registrations).where(eq2(registrations.familyCode, familyCode)).orderBy(registrations.id);
+    return this.db.select().from(registrations).where(eq(registrations.familyCode, familyCode)).orderBy(registrations.id);
   }
   async listForAdmin() {
     return this.db.select(ADMIN_COLUMNS).from(registrations).orderBy(desc(registrations.createdAt));
   }
   async getReceiptImage(id) {
-    const rows = await this.db.select({ receiptImage: registrations.receiptImage, receiptSubmittedAt: registrations.receiptSubmittedAt }).from(registrations).where(eq2(registrations.id, id)).limit(1);
+    const rows = await this.db.select({ receiptImage: registrations.receiptImage, receiptSubmittedAt: registrations.receiptSubmittedAt }).from(registrations).where(eq(registrations.id, id)).limit(1);
     return rows[0] ?? null;
   }
   async updateByNumber(registrationNumber, patch) {
-    await this.db.update(registrations).set(patch).where(eq2(registrations.registrationNumber, registrationNumber));
+    await this.db.update(registrations).set(patch).where(eq(registrations.registrationNumber, registrationNumber));
   }
   async updateById(id, patch) {
-    await this.db.update(registrations).set(patch).where(eq2(registrations.id, id));
+    await this.db.update(registrations).set(patch).where(eq(registrations.id, id));
   }
   async updateByFamilyCode(familyCode, patch) {
-    await this.db.update(registrations).set(patch).where(eq2(registrations.familyCode, familyCode));
+    await this.db.update(registrations).set(patch).where(eq(registrations.familyCode, familyCode));
   }
 };
-var DATE_FIELDS = ["emailSentAt", "receiptSubmittedAt", "verifiedAt", "createdAt", "updatedAt"];
+var DATE_FIELDS = ["emailSentAt", "receiptSubmittedAt", "verifiedAt", "checkedInAt", "entitlementsEligibleAt", "createdAt", "updatedAt"];
 var DATA_DIR = path.join(process.cwd(), ".data");
 var DATA_FILE = path.join(DATA_DIR, "registrations.json");
 var PERSIST = !process.env.VITEST;
@@ -900,6 +431,10 @@ var MemoryStore = class {
       receiptAnalysis: null,
       verifiedAt: null,
       verifiedBy: null,
+      checkedInAt: null,
+      checkedInBy: null,
+      entitlementsEligibleAt: null,
+      entitlementsEligibleBy: null,
       notes: null,
       createdAt: now,
       updatedAt: now
@@ -943,6 +478,10 @@ var MemoryStore = class {
       receiptAnalysis: null,
       verifiedAt: null,
       verifiedBy: null,
+      checkedInAt: null,
+      checkedInBy: null,
+      entitlementsEligibleAt: null,
+      entitlementsEligibleBy: null,
       notes: null,
       createdAt: item.createdAt,
       updatedAt: item.createdAt
@@ -1013,6 +552,57 @@ async function getStore() {
 
 // server/email/resend.ts
 import { Resend } from "resend";
+
+// server/_core/env.ts
+var ENV = {
+  get databaseUrl() {
+    return process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? "";
+  },
+  get isProduction() {
+    return process.env.NODE_ENV === "production";
+  },
+  // --- Email delivery (Resend) -------------------------------------------
+  // Server-only. These must not be referenced from client/ code.
+  /** Resend API key, `re_...`. Server-side only. */
+  get resendApiKey() {
+    return process.env.RESEND_API_KEY ?? "";
+  },
+  /** Verified sender, e.g. `Hope-Alive <ivc@your-verified-domain.org>`. */
+  get resendFromEmail() {
+    return process.env.RESEND_FROM_EMAIL ?? "";
+  },
+  /** Optional Reply-To shown to recipients, e.g. a monitored inbox. */
+  get resendReplyTo() {
+    return process.env.RESEND_REPLY_TO ?? "";
+  },
+  /** Public base URL of this site, used to build links inside emails. */
+  get appUrl() {
+    return (process.env.APP_URL ?? "").replace(/\/+$/, "");
+  },
+  // --- Payment / registration -------------------------------------------
+  /** Group invite link. Returned to the browser only for verified registrations. */
+  get whatsappGroupUrl() {
+    return process.env.WHATSAPP_GROUP_URL ?? "";
+  },
+  // --- Admin login (email + password) -----------------------------------
+  // Server-only. See server/_core/adminAuth.ts.
+  get adminEmail() {
+    return process.env.ADMIN_EMAIL ?? "";
+  },
+  get adminPassword() {
+    return process.env.ADMIN_PASSWORD ?? "";
+  },
+  get subAdminEmail() {
+    return process.env.SUB_ADMIN_EMAIL ?? "";
+  },
+  get subAdminPassword() {
+    return process.env.SUB_ADMIN_PASSWORD ?? "";
+  },
+  /** Secret used to sign the admin session cookie. Use a long random string. */
+  get adminSessionSecret() {
+    return process.env.ADMIN_SESSION_SECRET ?? "";
+  }
+};
 
 // server/email/templates.ts
 var INK = "#172c25";
@@ -1404,7 +994,7 @@ function clientIp(req) {
 
 // server/_core/adminAuth.ts
 import { parse as parseCookie } from "cookie";
-import { SignJWT as SignJWT2, jwtVerify as jwtVerify2 } from "jose";
+import { SignJWT, jwtVerify } from "jose";
 var ADMIN_COOKIE = "hopealive_admin";
 var SESSION_TTL_SECONDS = 60 * 60 * 12;
 var ADMIN_COOKIE_MAX_AGE_MS = SESSION_TTL_SECONDS * 1e3;
@@ -1420,25 +1010,31 @@ function constantTimeEqual(a, b) {
   return diff === 0;
 }
 function isAdminLoginConfigured() {
-  return Boolean(ENV.adminEmail && ENV.adminPassword && ENV.adminSessionSecret);
+  return Boolean(
+    ENV.adminEmail && ENV.adminPassword && ENV.adminSessionSecret && Boolean(ENV.subAdminEmail) === Boolean(ENV.subAdminPassword)
+  );
 }
 function adminLoginProblem() {
   if (!ENV.adminEmail) return "ADMIN_EMAIL is not set";
   if (!ENV.adminPassword) return "ADMIN_PASSWORD is not set";
+  if (Boolean(ENV.subAdminEmail) !== Boolean(ENV.subAdminPassword)) return "SUB_ADMIN_EMAIL and SUB_ADMIN_PASSWORD must both be set";
   if (!ENV.adminSessionSecret) return "ADMIN_SESSION_SECRET is not set";
   return null;
 }
 function verifyAdminCredentials(email, password) {
-  if (!isAdminLoginConfigured()) return false;
-  const emailOk = constantTimeEqual(email.trim().toLowerCase(), ENV.adminEmail.trim().toLowerCase());
-  const passwordOk = constantTimeEqual(password, ENV.adminPassword);
-  return emailOk && passwordOk;
+  if (!isAdminLoginConfigured()) return null;
+  const normalizedEmail = email.trim().toLowerCase();
+  const superAdminMatch = constantTimeEqual(normalizedEmail, ENV.adminEmail.trim().toLowerCase()) && constantTimeEqual(password, ENV.adminPassword);
+  const subAdminMatch = Boolean(ENV.subAdminEmail && ENV.subAdminPassword) && constantTimeEqual(normalizedEmail, ENV.subAdminEmail.trim().toLowerCase()) && constantTimeEqual(password, ENV.subAdminPassword);
+  if (superAdminMatch) return "superadmin";
+  if (subAdminMatch) return "subadmin";
+  return null;
 }
 function secretKey() {
   return new TextEncoder().encode(ENV.adminSessionSecret);
 }
-async function signAdminSession(email) {
-  return new SignJWT2({ role: "admin", email }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime(`${SESSION_TTL_SECONDS}s`).sign(secretKey());
+async function signAdminSession(email, role = "superadmin") {
+  return new SignJWT({ role, email }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime(`${SESSION_TTL_SECONDS}s`).sign(secretKey());
 }
 async function readAdminSession(req) {
   if (!ENV.adminSessionSecret) return null;
@@ -1452,153 +1048,45 @@ async function readAdminSession(req) {
   }
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify2(token, secretKey());
-    if (payload.role === "admin" && typeof payload.email === "string") {
-      return { email: payload.email };
+    const { payload } = await jwtVerify(token, secretKey());
+    if ((payload.role === "superadmin" || payload.role === "subadmin" || payload.role === "admin") && typeof payload.email === "string") {
+      return { email: payload.email, role: payload.role === "admin" ? "superadmin" : payload.role };
     }
   } catch {
   }
   return null;
 }
 
-// server/_core/systemRouter.ts
-import { z as z2 } from "zod";
-
-// server/_core/notification.ts
-import { TRPCError } from "@trpc/server";
-var TITLE_MAX_LENGTH = 1200;
-var CONTENT_MAX_LENGTH = 2e4;
-var trimValue = (value) => value.trim();
-var isNonEmptyString2 = (value) => typeof value === "string" && value.trim().length > 0;
-var buildEndpointUrl = (baseUrl) => {
-  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  return new URL(
-    "webdevtoken.v1.WebDevService/SendNotification",
-    normalizedBase
-  ).toString();
-};
-var validatePayload = (input) => {
-  if (!isNonEmptyString2(input.title)) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Notification title is required."
-    });
-  }
-  if (!isNonEmptyString2(input.content)) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Notification content is required."
-    });
-  }
-  const title = trimValue(input.title);
-  const content = trimValue(input.content);
-  if (title.length > TITLE_MAX_LENGTH) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `Notification title must be at most ${TITLE_MAX_LENGTH} characters.`
-    });
-  }
-  if (content.length > CONTENT_MAX_LENGTH) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `Notification content must be at most ${CONTENT_MAX_LENGTH} characters.`
-    });
-  }
-  return { title, content };
-};
-async function notifyOwner(payload) {
-  const { title, content } = validatePayload(payload);
-  if (!ENV.forgeApiUrl) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service URL is not configured."
-    });
-  }
-  if (!ENV.forgeApiKey) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service API key is not configured."
-    });
-  }
-  const endpoint = buildEndpointUrl(ENV.forgeApiUrl);
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${ENV.forgeApiKey}`,
-        "content-type": "application/json",
-        "connect-protocol-version": "1"
-      },
-      body: JSON.stringify({ title, content })
-    });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      console.warn(
-        `[Notification] Failed to notify owner (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`
-      );
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.warn("[Notification] Error calling notification service:", error);
-    return false;
-  }
+// server/_core/cookies.ts
+function getSessionCookieOptions(_req) {
+  return { httpOnly: true, path: "/", sameSite: "none", secure: true };
 }
 
 // server/_core/trpc.ts
-import { initTRPC, TRPCError as TRPCError2 } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 var t = initTRPC.context().create({
   transformer: superjson
 });
 var router = t.router;
 var publicProcedure = t.procedure;
-var requireUser = t.middleware(async (opts) => {
-  const { ctx, next } = opts;
-  if (!ctx.user) {
-    throw new TRPCError2({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
-  }
-  return next({
-    ctx: {
-      ...ctx,
-      user: ctx.user
-    }
-  });
-});
-var protectedProcedure = t.procedure.use(requireUser);
 var adminProcedure = t.procedure.use(
   t.middleware(async (opts) => {
     const { ctx, next } = opts;
-    const isAdmin = ctx.user?.role === "admin" || Boolean(ctx.admin);
-    if (!isAdmin) {
-      throw new TRPCError2({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    if (!ctx.admin) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Administrator access is required." });
     }
     return next({ ctx });
   })
 );
-
-// server/_core/systemRouter.ts
-var systemRouter = router({
-  health: publicProcedure.input(
-    z2.object({
-      timestamp: z2.number().min(0, "timestamp cannot be negative")
-    })
-  ).query(() => ({
-    ok: true
-  })),
-  notifyOwner: adminProcedure.input(
-    z2.object({
-      title: z2.string().min(1, "title is required"),
-      content: z2.string().min(1, "content is required")
-    })
-  ).mutation(async ({ input }) => {
-    const delivered = await notifyOwner(input);
-    return {
-      success: delivered
-    };
+var superAdminProcedure = t.procedure.use(
+  t.middleware(async ({ ctx, next }) => {
+    if (ctx.admin?.role !== "superadmin") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Super-admin access is required for this action." });
+    }
+    return next({ ctx });
   })
-});
+);
 
 // server/routers.ts
 var RATE_LIMITS = {
@@ -1611,7 +1099,7 @@ var RATE_LIMITS = {
 };
 function requireClassGroup(schoolClass) {
   const group = findClassGroup(schoolClass);
-  if (!group) throw new TRPCError3({ code: "BAD_REQUEST", message: "Please select a valid school class." });
+  if (!group) throw new TRPCError2({ code: "BAD_REQUEST", message: "Please select a valid school class." });
   return group;
 }
 function fingerprintHash(input) {
@@ -1641,10 +1129,12 @@ function toPublicRegistration(row) {
     classGroup: row.classGroup,
     paymentStatus: row.paymentStatus,
     verificationStatus: row.verificationStatus,
+    entitlementsEligible: Boolean(row.entitlementsEligibleAt),
     receiptStatus: row.receiptStatus,
     receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - row.receiptAttempts),
     receiptMessage: publicReceiptMessage(row),
     feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt),
+    registeredAt: row.createdAt,
     payment: PAYMENT_DETAILS,
     // Only a verified registration ever receives the invite link.
     whatsappGroupUrl: verified && ENV.whatsappGroupUrl ? ENV.whatsappGroupUrl : null
@@ -1662,26 +1152,20 @@ async function notifyPaymentVerified(row) {
   });
 }
 var appRouter = router({
-  system: systemRouter,
   auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return { success: true };
-    }),
-    /** Whether the caller currently holds an admin session (either mechanism). */
+    /** Whether the caller currently holds an administrator session. */
     adminSession: publicProcedure.query(({ ctx }) => ({
-      isAdmin: ctx.user?.role === "admin" || Boolean(ctx.admin),
-      email: ctx.admin?.email ?? ctx.user?.email ?? null,
+      isAdmin: Boolean(ctx.admin),
+      email: ctx.admin?.email ?? null,
+      role: ctx.admin?.role ?? null,
       loginConfigured: isAdminLoginConfigured()
     })),
     /** Email + password admin login. Sets a signed, httpOnly session cookie. */
-    adminLogin: publicProcedure.input(z3.object({ email: z3.string().trim().min(1), password: z3.string().min(1) })).mutation(async ({ input, ctx }) => {
+    adminLogin: publicProcedure.input(z2.object({ email: z2.string().trim().min(1), password: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
       const ip = clientIp(ctx.req);
       const limit = hitRateLimit(`adminlogin:ip:${ip}`, 8, 10 * 60 * 1e3);
       if (!limit.allowed) {
-        throw new TRPCError3({
+        throw new TRPCError2({
           code: "TOO_MANY_REQUESTS",
           message: `Too many login attempts. Please try again in about ${Math.ceil(limit.retryAfterSeconds / 60)} minute(s).`
         });
@@ -1689,14 +1173,15 @@ var appRouter = router({
       const problem = adminLoginProblem();
       if (problem) {
         console.warn(`[Admin] Login unavailable: ${problem}.`);
-        throw new TRPCError3({ code: "PRECONDITION_FAILED", message: "Admin login is not configured on the server yet." });
+        throw new TRPCError2({ code: "PRECONDITION_FAILED", message: "Admin login is not configured on the server yet." });
       }
-      if (!verifyAdminCredentials(input.email, input.password)) {
-        throw new TRPCError3({ code: "UNAUTHORIZED", message: "Incorrect email or password." });
+      const role = verifyAdminCredentials(input.email, input.password);
+      if (!role) {
+        throw new TRPCError2({ code: "UNAUTHORIZED", message: "Incorrect email or password." });
       }
-      const token = await signAdminSession(input.email.trim().toLowerCase());
+      const token = await signAdminSession(input.email.trim().toLowerCase(), role);
       ctx.res.cookie(ADMIN_COOKIE, token, { ...getSessionCookieOptions(ctx.req), maxAge: ADMIN_COOKIE_MAX_AGE_MS });
-      return { success: true };
+      return { success: true, role };
     }),
     adminLogout: publicProcedure.mutation(({ ctx }) => {
       ctx.res.clearCookie(ADMIN_COOKIE, { ...getSessionCookieOptions(ctx.req), maxAge: -1 });
@@ -1709,14 +1194,14 @@ var appRouter = router({
       const guardianEmail = normalizeEmail(input.guardianEmail);
       const ipLimit = hitRateLimit(`register:ip:${ip}`, RATE_LIMITS.ip.limit, RATE_LIMITS.ip.windowMs);
       if (!ipLimit.allowed) {
-        throw new TRPCError3({
+        throw new TRPCError2({
           code: "TOO_MANY_REQUESTS",
           message: `Too many registration attempts. Please try again in about ${Math.ceil(ipLimit.retryAfterSeconds / 60)} minute(s).`
         });
       }
       const emailLimit = hitRateLimit(`register:email:${guardianEmail}`, RATE_LIMITS.email.limit, RATE_LIMITS.email.windowMs);
       if (!emailLimit.allowed) {
-        throw new TRPCError3({
+        throw new TRPCError2({
           code: "TOO_MANY_REQUESTS",
           message: "This email address has been used for several registrations recently. Please contact us on WhatsApp if you need to register more participants."
         });
@@ -1728,7 +1213,7 @@ var appRouter = router({
       const studentName = input.studentName.trim().replace(/\s+/g, " ");
       const dedupeKey = fingerprintHash({ studentName, guardianPhone, schoolClass: input.schoolClass });
       if (await store.findByDedupeKey(dedupeKey)) {
-        throw new TRPCError3({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+        throw new TRPCError2({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
       }
       let registrationNumber;
       try {
@@ -1743,9 +1228,9 @@ var appRouter = router({
           emailStatus: isEmailConfigured() ? "pending" : "skipped"
         });
       } catch (error) {
-        if (error instanceof DuplicateRegistrationError) throw new TRPCError3({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+        if (error instanceof DuplicateRegistrationError) throw new TRPCError2({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
         console.error("[Registration] Failed to save registration:", error);
-        throw new TRPCError3({
+        throw new TRPCError2({
           code: "INTERNAL_SERVER_ERROR",
           message: "We could not save your registration. Please try again."
         });
@@ -1791,13 +1276,13 @@ var appRouter = router({
     createFamily: publicProcedure.input(familyRegistrationInputSchema).mutation(async ({ input, ctx }) => {
       const ip = clientIp(ctx.req);
       const limited = hitRateLimit(`register:ip:${ip}`, RATE_LIMITS.ip.limit, RATE_LIMITS.ip.windowMs);
-      if (!limited.allowed) throw new TRPCError3({ code: "TOO_MANY_REQUESTS", message: "Too many registration attempts. Please try again shortly." });
+      if (!limited.allowed) throw new TRPCError2({ code: "TOO_MANY_REQUESTS", message: "Too many registration attempts. Please try again shortly." });
       const phone = normalizePhone(input.guardianPhone);
       const email = input.consentToEmail && input.guardianEmail ? normalizeEmail(input.guardianEmail) : null;
       if (email) {
         const emailLimit = hitRateLimit(`register:email:${email}`, RATE_LIMITS.email.limit, RATE_LIMITS.email.windowMs);
         if (!emailLimit.allowed) {
-          throw new TRPCError3({
+          throw new TRPCError2({
             code: "TOO_MANY_REQUESTS",
             message: "This email address has been used for several registrations recently. Please contact us on WhatsApp if you need to register more participants."
           });
@@ -1810,13 +1295,13 @@ var appRouter = router({
         const studentName = participant.studentName.trim().replace(/\s+/g, " ");
         const classGroup = requireClassGroup(participant.schoolClass);
         const dedupeKey = fingerprintHash({ studentName, guardianPhone: phone, schoolClass: participant.schoolClass });
-        if (await store.findByDedupeKey(dedupeKey)) throw new TRPCError3({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+        if (await store.findByDedupeKey(dedupeKey)) throw new TRPCError2({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
         let registrationNumber;
         try {
           registrationNumber = await store.create({ studentName, guardianEmail: email, guardianPhone: phone, schoolClass: participant.schoolClass, classGroup, prefix: GROUP_PREFIXES[classGroup], dedupeKey, emailStatus: email && isEmailConfigured() ? "pending" : "skipped" });
         } catch (error) {
-          if (error instanceof DuplicateRegistrationError) throw new TRPCError3({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
-          throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "We could not save this registration. Please try again." });
+          if (error instanceof DuplicateRegistrationError) throw new TRPCError2({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+          throw new TRPCError2({ code: "INTERNAL_SERVER_ERROR", message: "We could not save this registration. Please try again." });
         }
         const saved = await store.findByNumber(registrationNumber);
         const registeredAt = saved?.createdAt ?? createdAt;
@@ -1867,13 +1352,13 @@ var appRouter = router({
         return { studentName, guardianEmail: email, guardianPhone: phone, schoolClass: p.schoolClass, classGroup, prefix: GROUP_PREFIXES[classGroup], dedupeKey: fingerprintHash({ studentName, guardianPhone: phone, schoolClass: p.schoolClass }), emailStatus: email && isEmailConfigured() ? "pending" : "skipped", familyCode, familyPaymentLead: index === 0, createdAt };
       });
       const keys = participants.map((p) => p.dedupeKey);
-      if (new Set(keys).size !== keys.length || (await Promise.all(keys.map((key) => store.findByDedupeKey(key)))).some(Boolean)) throw new TRPCError3({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+      if (new Set(keys).size !== keys.length || (await Promise.all(keys.map((key) => store.findByDedupeKey(key)))).some(Boolean)) throw new TRPCError2({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
       let numbers;
       try {
         numbers = await store.createFamily(participants);
       } catch (error) {
-        if (error instanceof DuplicateRegistrationError) throw new TRPCError3({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
-        throw new TRPCError3({ code: "INTERNAL_SERVER_ERROR", message: "We could not save this family registration. Please try again." });
+        if (error instanceof DuplicateRegistrationError) throw new TRPCError2({ code: "CONFLICT", message: DUPLICATE_MESSAGE });
+        throw new TRPCError2({ code: "INTERNAL_SERVER_ERROR", message: "We could not save this family registration. Please try again." });
       }
       const members = participants.map((p, i) => ({ registrationNumber: numbers[i], studentName: p.studentName, schoolClass: p.schoolClass, classGroup: p.classGroup, feeNgn: registrationFeeNgn(p.schoolClass, createdAt) }));
       const total = members.reduce((sum, member) => sum + (member.feeNgn ?? 0), 0);
@@ -1892,20 +1377,22 @@ var appRouter = router({
       const phone = normalizePhone(input.guardianPhone);
       if (lookupNumber.startsWith("HA-")) {
         const family = await store.findByFamilyCode(lookupNumber);
-        if (!family.length || family[0].guardianPhone !== phone) throw new TRPCError3({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
+        if (!family.length || family[0].guardianPhone !== phone) throw new TRPCError2({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
         const lead = family.find((row) => row.familyPaymentLead) ?? family[0];
         const members = family.map((row) => ({ registrationNumber: row.registrationNumber, studentName: row.studentName, schoolClass: row.schoolClass, classGroup: row.classGroup, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) }));
-        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: family.length > 1 ? "family" : "individual", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: family.every((row) => row.verificationStatus === "verified") ? "verified" : lead.verificationStatus, receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
+        const familyVerified = family.every((row) => row.verificationStatus === "verified");
+        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: family.length > 1 ? "family" : "individual", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: familyVerified ? "verified" : lead.verificationStatus, entitlementsEligible: familyVerified && family.every((row) => Boolean(row.entitlementsEligibleAt)), receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
       }
       const registration = await store.findByNumber(lookupNumber);
       if (!registration || registration.guardianPhone !== phone) {
-        throw new TRPCError3({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
+        throw new TRPCError2({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
       }
       if (registration.familyCode) {
         const family = await store.findByFamilyCode(registration.familyCode);
         const lead = family.find((row) => row.familyPaymentLead) ?? family[0];
         const members = family.map((row) => ({ registrationNumber: row.registrationNumber, studentName: row.studentName, schoolClass: row.schoolClass, classGroup: row.classGroup, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) }));
-        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: "family", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: family.every((row) => row.verificationStatus === "verified") ? "verified" : lead.verificationStatus, receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
+        const familyVerified = family.every((row) => row.verificationStatus === "verified");
+        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: "family", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: familyVerified ? "verified" : lead.verificationStatus, entitlementsEligible: familyVerified && family.every((row) => Boolean(row.entitlementsEligibleAt)), receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
       }
       return toPublicRegistration(registration);
     }),
@@ -1918,7 +1405,7 @@ var appRouter = router({
       const ip = clientIp(ctx.req);
       const ipLimit = hitRateLimit(`receipt:ip:${ip}`, RATE_LIMITS.receiptIp.limit, RATE_LIMITS.receiptIp.windowMs);
       if (!ipLimit.allowed) {
-        throw new TRPCError3({
+        throw new TRPCError2({
           code: "TOO_MANY_REQUESTS",
           message: `Too many uploads. Please try again in about ${Math.ceil(ipLimit.retryAfterSeconds / 60)} minute(s).`
         });
@@ -1928,7 +1415,7 @@ var appRouter = router({
       const lookupNumber = input.registrationNumber.toUpperCase();
       let registration = lookupNumber.startsWith("HA-") ? (await store.findByFamilyCode(lookupNumber)).find((row) => row.familyPaymentLead) ?? null : await store.findByNumber(lookupNumber);
       if (!registration || registration.guardianPhone !== phone) {
-        throw new TRPCError3({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
+        throw new TRPCError2({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
       }
       if (registration.familyCode && !registration.familyPaymentLead) {
         registration = (await store.findByFamilyCode(registration.familyCode)).find((row) => row.familyPaymentLead) ?? registration;
@@ -1937,7 +1424,7 @@ var appRouter = router({
         return { outcome: "already_verified", ...toPublicRegistration(registration) };
       }
       if (registration.receiptAttempts >= MAX_RECEIPT_ATTEMPTS) {
-        throw new TRPCError3({
+        throw new TRPCError2({
           code: "PRECONDITION_FAILED",
           message: `You've reached the upload limit for this registration. Please message us on WhatsApp ${PAYMENT_DETAILS.enquiriesPhone} with your registration ID and we'll confirm it manually.`
         });
@@ -1968,25 +1455,26 @@ var appRouter = router({
         ...family.length ? { members, studentName: `${family.length} participants`, feeNgn: members.reduce((sum, item) => sum + (item.feeNgn ?? 0), 0) } : {}
       };
     }),
-    adminList: adminProcedure.query(async () => {
+    adminList: adminProcedure.query(async ({ ctx }) => {
       const store = await getStore();
       const rows = await store.listForAdmin();
       const confirmedAmountNgn = rows.reduce((sum, row) => sum + (row.familyCode ? row.familyPaymentLead ? row.verifiedAmountNgn ?? 0 : 0 : row.verificationStatus === "verified" ? registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0 : 0), 0);
       const pendingExpectedAmountNgn = rows.reduce((sum, row) => sum + (row.verificationStatus === "verified" ? 0 : registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0);
       return {
-        rows: rows.map((row) => ({ ...row, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) })),
+        rows: rows.map((row) => ({ ...row, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt), entitlementsEligible: Boolean(row.entitlementsEligibleAt) })),
         confirmedAmountNgn,
         pendingExpectedAmountNgn,
         emailConfigured: isEmailConfigured(),
         emailProblem: emailConfigurationProblem(),
-        groupLinkConfigured: Boolean(ENV.whatsappGroupUrl)
+        groupLinkConfigured: Boolean(ENV.whatsappGroupUrl),
+        viewerRole: ctx.admin?.role ?? "superadmin"
       };
     }),
     /** The stored receipt screenshot for one registration, fetched on demand. */
-    adminReceiptImage: adminProcedure.input(z3.object({ id: z3.number().int().positive() })).query(async ({ input }) => {
+    adminReceiptImage: adminProcedure.input(z2.object({ id: z2.number().int().positive() })).query(async ({ input }) => {
       const store = await getStore();
       const result = await store.getReceiptImage(input.id);
-      if (!result) throw new TRPCError3({ code: "NOT_FOUND", message: "Registration not found." });
+      if (!result) throw new TRPCError2({ code: "NOT_FOUND", message: "Registration not found." });
       return result;
     }),
     /**
@@ -1994,24 +1482,40 @@ var appRouter = router({
      * registration to verified for the first time also sends the group-link
      * email. The "first time" guard prevents duplicate confirmation emails.
      */
-    adminUpdateStatus: adminProcedure.input(z3.object({ id: z3.number().int().positive(), paymentStatus: z3.enum(PAYMENT_STATUSES), actualAmountNgn: z3.number().int().positive().optional() })).mutation(async ({ input }) => {
+    adminUpdateStatus: adminProcedure.input(z2.object({ id: z2.number().int().positive(), paymentStatus: z2.enum(PAYMENT_STATUSES), actualAmountNgn: z2.number().int().positive().optional() })).mutation(async ({ input, ctx }) => {
+      if (ctx.admin?.role === "subadmin" && input.paymentStatus !== "verified" && input.paymentStatus !== "rejected") {
+        throw new TRPCError2({ code: "FORBIDDEN", message: "Sub-admins can only confirm or reject payment." });
+      }
       const store = await getStore();
       const registration = await store.findById(input.id);
-      if (!registration) throw new TRPCError3({ code: "NOT_FOUND", message: "Registration not found." });
+      if (!registration) throw new TRPCError2({ code: "NOT_FOUND", message: "Registration not found." });
       const verificationStatus2 = input.paymentStatus === "verified" || input.paymentStatus === "completed" ? "verified" : input.paymentStatus === "rejected" ? "rejected" : input.paymentStatus === "under_review" ? "clarification" : "pending";
+      if (verificationStatus2 !== "verified") {
+        const affectedRegistrations = registration.familyCode ? await store.findByFamilyCode(registration.familyCode) : [registration];
+        if (affectedRegistrations.some((row) => row.checkedInAt)) {
+          throw new TRPCError2({
+            code: "PRECONDITION_FAILED",
+            message: "Payment status cannot be changed after camp check-in. Contact an administrator if this needs correction."
+          });
+        }
+      }
       const becomingVerified = verificationStatus2 === "verified" && registration.verificationStatus !== "verified";
+      const actor = ctx.admin?.email ?? "admin";
+      const eligibleAt = verificationStatus2 === "verified" ? registration.entitlementsEligibleAt ?? registration.verifiedAt ?? /* @__PURE__ */ new Date() : null;
       const patch = {
         paymentStatus: input.paymentStatus,
         verificationStatus: verificationStatus2,
-        ...becomingVerified ? { verifiedAt: /* @__PURE__ */ new Date(), verifiedBy: "admin" } : {}
+        ...becomingVerified ? { verifiedAt: /* @__PURE__ */ new Date(), verifiedBy: "admin" } : {},
+        entitlementsEligibleAt: eligibleAt,
+        entitlementsEligibleBy: eligibleAt ? registration.entitlementsEligibleBy ?? actor : null
       };
       if (registration.familyCode) {
         const family = await store.findByFamilyCode(registration.familyCode);
         const expected = family.reduce((sum, row) => sum + (registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0);
         if (becomingVerified) {
           const actual = input.actualAmountNgn;
-          if (!actual) throw new TRPCError3({ code: "BAD_REQUEST", message: `Enter the bank-confirmed amount for this family. Expected total: \u20A6${expected.toLocaleString("en-NG")}.` });
-          if (actual !== expected) throw new TRPCError3({ code: "BAD_REQUEST", message: `The entered amount does not match the family total of \u20A6${expected.toLocaleString("en-NG")}. Leave the family pending and investigate the difference.` });
+          if (!actual) throw new TRPCError2({ code: "BAD_REQUEST", message: `Enter the bank-confirmed amount for this family. Expected total: \u20A6${expected.toLocaleString("en-NG")}.` });
+          if (actual !== expected) throw new TRPCError2({ code: "BAD_REQUEST", message: `The entered amount does not match the family total of \u20A6${expected.toLocaleString("en-NG")}. Leave the family pending and investigate the difference.` });
           await store.updateByFamilyCode(registration.familyCode, { ...patch, verifiedAmountNgn: null });
           const lead = family.find((row) => row.familyPaymentLead) ?? family[0];
           await store.updateById(lead.id, { verifiedAmountNgn: actual });
@@ -2031,16 +1535,29 @@ var appRouter = router({
       }
       return { success: true, emailed: becomingVerified && Boolean(registration.guardianEmail) };
     }),
-    /** Retries a confirmation email that Resend rejected or that was never sent. */
-    adminResendEmail: adminProcedure.input(z3.object({ id: z3.number().int().positive() })).mutation(async ({ input }) => {
+    /** Camp arrival is staff-only and requires confirmed payment. */
+    adminUpdateCampStatus: adminProcedure.input(z2.object({ id: z2.number().int().positive(), action: z2.literal("check_in") })).mutation(async ({ input, ctx }) => {
       const store = await getStore();
       const registration = await store.findById(input.id);
-      if (!registration) throw new TRPCError3({ code: "NOT_FOUND", message: "Registration not found." });
+      if (!registration) throw new TRPCError2({ code: "NOT_FOUND", message: "Registration not found." });
+      if (registration.verificationStatus !== "verified") {
+        throw new TRPCError2({ code: "PRECONDITION_FAILED", message: "Confirm payment before checking in this participant." });
+      }
+      const now = /* @__PURE__ */ new Date();
+      const actor = ctx.admin?.email ?? "admin";
+      if (!registration.checkedInAt) await store.updateById(input.id, { checkedInAt: now, checkedInBy: actor });
+      return { success: true, action: input.action };
+    }),
+    /** Retries a confirmation email that Resend rejected or that was never sent. */
+    adminResendEmail: superAdminProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input }) => {
+      const store = await getStore();
+      const registration = await store.findById(input.id);
+      if (!registration) throw new TRPCError2({ code: "NOT_FOUND", message: "Registration not found." });
       if (!registration.guardianEmail) {
-        throw new TRPCError3({ code: "BAD_REQUEST", message: "This registration has no email address on file." });
+        throw new TRPCError2({ code: "BAD_REQUEST", message: "This registration has no email address on file." });
       }
       const problem = emailConfigurationProblem();
-      if (problem) throw new TRPCError3({ code: "PRECONDITION_FAILED", message: `Email is not configured: ${problem}.` });
+      if (problem) throw new TRPCError2({ code: "PRECONDITION_FAILED", message: `Email is not configured: ${problem}.` });
       const emailResult = await sendRegistrationEmail(
         registration.guardianEmail,
         {
@@ -2061,7 +1578,7 @@ var appRouter = router({
         emailResult.status === "sent" ? { emailStatus: "sent", emailMessageId: emailResult.messageId, emailSentAt: /* @__PURE__ */ new Date(), emailError: null } : { emailStatus: emailResult.status, emailError: emailResult.reason.slice(0, 255) }
       );
       if (emailResult.status !== "sent") {
-        throw new TRPCError3({
+        throw new TRPCError2({
           code: "INTERNAL_SERVER_ERROR",
           message: `Resend could not accept the message: ${emailResult.reason}`
         });
@@ -2073,22 +1590,10 @@ var appRouter = router({
 
 // server/_core/context.ts
 async function createContext(opts) {
-  let user = null;
-  try {
-    user = await sdk.authenticateRequest(opts.req);
-  } catch (error) {
-    user = null;
-  }
-  let admin = null;
-  try {
-    admin = await readAdminSession(opts.req);
-  } catch {
-    admin = null;
-  }
+  const admin = await readAdminSession(opts.req);
   return {
     req: opts.req,
     res: opts.res,
-    user,
     admin
   };
 }
@@ -2102,17 +1607,13 @@ function createApp() {
     try {
       const db = await getDb();
       if (!db) return res.status(503).json({ status: "unavailable", database: "not_configured" });
-      await db.select({ id: users.id }).from(users).limit(1);
+      await db.select({ id: registrations.id }).from(registrations).limit(1);
       return res.json({ status: "ok", database: "connected" });
     } catch (error) {
       console.error("[Health] Database check failed:", error);
       return res.status(503).json({ status: "unavailable", database: "error" });
     }
   });
-  app2.get("/api/platform/config.js", (_req, res) => {
-    res.set("Cache-Control", "no-store").type("application/javascript").send(publicPlatformScript());
-  });
-  registerOAuthRoutes(app2);
   app2.use(
     "/api/trpc",
     createExpressMiddleware({

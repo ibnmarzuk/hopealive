@@ -1,4 +1,3 @@
-import { COOKIE_NAME } from "@shared/const";
 import {
   GROUP_PREFIXES,
   MAX_RECEIPT_ATTEMPTS,
@@ -38,8 +37,7 @@ import {
 } from "./_core/adminAuth";
 import { ENV } from "./_core/env";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { systemRouter } from "./_core/systemRouter";
-import { adminProcedure, publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, publicProcedure, router, superAdminProcedure } from "./_core/trpc";
 
 /**
  * Abuse protection for the public mutations.
@@ -93,6 +91,7 @@ type PublicRegistrationSource = Pick<
   | "receiptAttempts"
   | "createdAt"
 > & {
+  entitlementsEligibleAt?: Registration["entitlementsEligibleAt"];
   familyCode?: Registration["familyCode"];
   familyPaymentLead?: Registration["familyPaymentLead"];
 };
@@ -120,10 +119,12 @@ function toPublicRegistration(row: PublicRegistrationSource) {
     classGroup: row.classGroup,
     paymentStatus: row.paymentStatus,
     verificationStatus: row.verificationStatus,
+    entitlementsEligible: Boolean(row.entitlementsEligibleAt),
     receiptStatus: row.receiptStatus,
     receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - row.receiptAttempts),
     receiptMessage: publicReceiptMessage(row),
     feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt),
+    registeredAt: row.createdAt,
     payment: PAYMENT_DETAILS,
     // Only a verified registration ever receives the invite link.
     whatsappGroupUrl: verified && ENV.whatsappGroupUrl ? ENV.whatsappGroupUrl : null,
@@ -148,19 +149,12 @@ async function notifyPaymentVerified(
 }
 
 export const appRouter = router({
-  system: systemRouter,
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return { success: true } as const;
-    }),
-
-    /** Whether the caller currently holds an admin session (either mechanism). */
+    /** Whether the caller currently holds an administrator session. */
     adminSession: publicProcedure.query(({ ctx }) => ({
-      isAdmin: ctx.user?.role === "admin" || Boolean(ctx.admin),
-      email: ctx.admin?.email ?? ctx.user?.email ?? null,
+      isAdmin: Boolean(ctx.admin),
+      email: ctx.admin?.email ?? null,
+      role: ctx.admin?.role ?? null,
       loginConfigured: isAdminLoginConfigured(),
     })),
 
@@ -183,13 +177,14 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Admin login is not configured on the server yet." });
         }
 
-        if (!verifyAdminCredentials(input.email, input.password)) {
+        const role = verifyAdminCredentials(input.email, input.password);
+        if (!role) {
           throw new TRPCError({ code: "UNAUTHORIZED", message: "Incorrect email or password." });
         }
 
-        const token = await signAdminSession(input.email.trim().toLowerCase());
+        const token = await signAdminSession(input.email.trim().toLowerCase(), role);
         ctx.res.cookie(ADMIN_COOKIE, token, { ...getSessionCookieOptions(ctx.req), maxAge: ADMIN_COOKIE_MAX_AGE_MS });
-        return { success: true } as const;
+        return { success: true, role } as const;
       }),
 
     adminLogout: publicProcedure.mutation(({ ctx }) => {
@@ -401,7 +396,8 @@ export const appRouter = router({
         if (!family.length || family[0].guardianPhone !== phone) throw new TRPCError({ code: "NOT_FOUND", message: NOT_FOUND_MESSAGE });
         const lead = family.find(row => row.familyPaymentLead) ?? family[0];
         const members = family.map(row => ({ registrationNumber: row.registrationNumber, studentName: row.studentName, schoolClass: row.schoolClass, classGroup: row.classGroup, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) }));
-        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: family.length > 1 ? "family" : "individual", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: family.every(row => row.verificationStatus === "verified") ? "verified" as const : lead.verificationStatus, receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
+        const familyVerified = family.every(row => row.verificationStatus === "verified");
+        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: family.length > 1 ? "family" : "individual", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: familyVerified ? "verified" as const : lead.verificationStatus, entitlementsEligible: familyVerified && family.every(row => Boolean(row.entitlementsEligibleAt)), receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
       }
       const registration = await store.findByNumber(lookupNumber);
       if (!registration || registration.guardianPhone !== phone) {
@@ -411,7 +407,8 @@ export const appRouter = router({
         const family = await store.findByFamilyCode(registration.familyCode);
         const lead = family.find(row => row.familyPaymentLead) ?? family[0];
         const members = family.map(row => ({ registrationNumber: row.registrationNumber, studentName: row.studentName, schoolClass: row.schoolClass, classGroup: row.classGroup, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) }));
-        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: "family", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: family.every(row => row.verificationStatus === "verified") ? "verified" as const : lead.verificationStatus, receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
+        const familyVerified = family.every(row => row.verificationStatus === "verified");
+        return { ...toPublicRegistration(lead), studentName: `${family.length} participants`, familyCode: lead.familyCode, registrationType: "family", members, feeNgn: members.reduce((sum, m) => sum + (m.feeNgn ?? 0), 0), verificationStatus: familyVerified ? "verified" as const : lead.verificationStatus, entitlementsEligible: familyVerified && family.every(row => Boolean(row.entitlementsEligibleAt)), receiptAttemptsLeft: Math.max(0, MAX_RECEIPT_ATTEMPTS - lead.receiptAttempts) };
       }
       return toPublicRegistration(registration);
     }),
@@ -484,18 +481,19 @@ export const appRouter = router({
       };
     }),
 
-    adminList: adminProcedure.query(async () => {
+    adminList: adminProcedure.query(async ({ ctx }) => {
       const store = await getStore();
       const rows = await store.listForAdmin();
       const confirmedAmountNgn = rows.reduce((sum, row) => sum + (row.familyCode ? (row.familyPaymentLead ? row.verifiedAmountNgn ?? 0 : 0) : row.verificationStatus === "verified" ? registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0 : 0), 0);
       const pendingExpectedAmountNgn = rows.reduce((sum, row) => sum + (row.verificationStatus === "verified" ? 0 : registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0);
       return {
-        rows: rows.map(row => ({ ...row, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) })),
+        rows: rows.map(row => ({ ...row, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt), entitlementsEligible: Boolean(row.entitlementsEligibleAt) })),
         confirmedAmountNgn,
         pendingExpectedAmountNgn,
         emailConfigured: isEmailConfigured(),
         emailProblem: emailConfigurationProblem(),
         groupLinkConfigured: Boolean(ENV.whatsappGroupUrl),
+        viewerRole: ctx.admin?.role ?? "superadmin",
       };
     }),
 
@@ -514,7 +512,10 @@ export const appRouter = router({
      */
     adminUpdateStatus: adminProcedure
       .input(z.object({ id: z.number().int().positive(), paymentStatus: z.enum(PAYMENT_STATUSES), actualAmountNgn: z.number().int().positive().optional() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.admin?.role === "subadmin" && input.paymentStatus !== "verified" && input.paymentStatus !== "rejected") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Sub-admins can only confirm or reject payment." });
+        }
         const store = await getStore();
         const registration = await store.findById(input.id);
         if (!registration) throw new TRPCError({ code: "NOT_FOUND", message: "Registration not found." });
@@ -527,12 +528,29 @@ export const appRouter = router({
               : input.paymentStatus === "under_review"
                 ? "clarification"
                 : "pending";
+        if (verificationStatus !== "verified") {
+          const affectedRegistrations = registration.familyCode
+            ? await store.findByFamilyCode(registration.familyCode)
+            : [registration];
+          if (affectedRegistrations.some(row => row.checkedInAt)) {
+            throw new TRPCError({
+                code: "PRECONDITION_FAILED",
+                message: "Payment status cannot be changed after camp check-in. Contact an administrator if this needs correction.",
+            });
+          }
+        }
         const becomingVerified = verificationStatus === "verified" && registration.verificationStatus !== "verified";
+        const actor = ctx.admin?.email ?? "admin";
+        const eligibleAt = verificationStatus === "verified"
+          ? registration.entitlementsEligibleAt ?? registration.verifiedAt ?? new Date()
+          : null;
 
         const patch: Partial<Registration> = {
           paymentStatus: input.paymentStatus,
           verificationStatus,
           ...(becomingVerified ? { verifiedAt: new Date(), verifiedBy: "admin" as const } : {}),
+          entitlementsEligibleAt: eligibleAt,
+          entitlementsEligibleBy: eligibleAt ? registration.entitlementsEligibleBy ?? actor : null,
         };
         if (registration.familyCode) {
           const family = await store.findByFamilyCode(registration.familyCode);
@@ -562,8 +580,25 @@ export const appRouter = router({
         return { success: true, emailed: becomingVerified && Boolean(registration.guardianEmail) } as const;
       }),
 
+    /** Camp arrival is staff-only and requires confirmed payment. */
+    adminUpdateCampStatus: adminProcedure
+      .input(z.object({ id: z.number().int().positive(), action: z.literal("check_in") }))
+      .mutation(async ({ input, ctx }) => {
+        const store = await getStore();
+        const registration = await store.findById(input.id);
+        if (!registration) throw new TRPCError({ code: "NOT_FOUND", message: "Registration not found." });
+        if (registration.verificationStatus !== "verified") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Confirm payment before checking in this participant." });
+        }
+
+        const now = new Date();
+        const actor = ctx.admin?.email ?? "admin";
+        if (!registration.checkedInAt) await store.updateById(input.id, { checkedInAt: now, checkedInBy: actor });
+        return { success: true, action: input.action } as const;
+      }),
+
     /** Retries a confirmation email that Resend rejected or that was never sent. */
-    adminResendEmail: adminProcedure
+    adminResendEmail: superAdminProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ input }) => {
         const store = await getStore();
