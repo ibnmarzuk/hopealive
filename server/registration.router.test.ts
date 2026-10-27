@@ -49,7 +49,7 @@ function subAdminCaller() {
 }
 
 const validInput = {
-  studentName: "Aisha Ibrahim",
+  studentName: "Enter your fullname",
   guardianEmail: "Parent@Example.com",
   guardianPhone: "0805 778 2932",
   schoolClass: "Basic 4", // → Middle Class → MIDDLE-###

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import {
   ArrowUpRight,
   BookOpen,
@@ -8,7 +8,6 @@ import {
   Clock3,
   Copy,
   HeartHandshake,
-  Mail,
   MapPin,
   Menu,
   MessageCircle,
@@ -28,21 +27,18 @@ const rhythmCards = [
     title: "Faith",
     copy: "Qur'an, reflection and meaningful conversations that help young hearts connect with Islam.",
     icon: BookOpen,
-    tone: "sage",
   },
   {
     number: "02",
     title: "Character",
     copy: "Practical activities and shared responsibility that build confidence, care and good character.",
     icon: Sparkles,
-    tone: "apricot",
   },
   {
     number: "03",
     title: "Memories",
     copy: "Camping, friendship and joyful moments that participants will carry long after December.",
     icon: HeartHandshake,
-    tone: "lavender",
   },
 ];
 
@@ -57,12 +53,12 @@ const registerSteps = [
     number: "02",
     title: "Keep the ID or passkey",
     copy: "Each child gets a registration ID. A family also gets one passkey for a single payment and receipt. Copy it and keep it safe for later.",
-    icon: Mail,
+    icon: Copy,
   },
   {
     number: "03",
-    title: "Pay and keep your ID",
-    copy: "Transfer the fee using the registration ID or family passkey as the reference. Our team confirms payment, and confirmed participants get the group link.",
+    title: "Upload evidence for review",
+    copy: "Transfer using the registration ID or family passkey as reference, then upload the receipt. Staff confirm payment after checking the bank account.",
     icon: ShieldCheck,
   },
 ];
@@ -76,7 +72,7 @@ const faqs = [
   {
     question: "What happens after I register?",
     answer:
-      "Your place is saved immediately. You get a registration ID for each child, and a family passkey if you registered siblings together. Email is optional, and your registration can always be reopened later with the same ID or passkey.",
+      "Your place is saved immediately. Each child gets a registration ID, and a family gets one passkey. To reopen a registration, use its ID or passkey together with the phone number used on the form. Email is optional.",
   },
   {
     question: "Do I need to pay to register?",
@@ -107,10 +103,6 @@ function Mark({ compact = false }: { compact?: boolean }) {
       <span className="brand-mark__star" />
     </span>
   );
-}
-
-function SectionLabel({ children }: { children: ReactNode }) {
-  return <p className="section-label">{children}</p>;
 }
 
 export default function Home() {
@@ -158,9 +150,8 @@ export default function Home() {
       <main id="top">
         <section className="hero-section">
           <div className="hero-copy">
-            <SectionLabel><span className="label-dot" /> Islamic Vacation Course 2026</SectionLabel>
-            <h1>Reserve their place <em>today.</em></h1>
-            <p className="hero-lede">Register one child or a family for the IVC 2026 camping programme in Ilorin. Your place is saved straight away, and payment can wait until you are ready.</p>
+            <h1>A week of faith, <em>learning and lasting memories.</em></h1>
+            <p className="hero-lede">Six days of faith, learning and community in Ilorin. Register one participant or a family of up to six; your place is saved before payment.</p>
             <div className="hero-actions">
               <a className="button button--ink button--lg" href="/register">Register a participant <ArrowUpRight size={18} /></a>
               <a className="text-link" href="/register?mode=continue">Continue a registration <span>↘</span></a>
@@ -173,10 +164,10 @@ export default function Home() {
           </div>
           <div className="hero-visual">
             <div className="hero-image-wrap">
-              <img src={heroImage} alt="Islamic Vacation Course 2026 camping retreat environment with domes, crescent moon and Quran learning emblem" className="hero-image" referrerPolicy="no-referrer" />
+              <img src={heroImage} alt="Illustrated camping and learning scene for the Hope-Alive Islamic Vacation Course" className="hero-image" />
               <div className="hero-image-wash" />
             </div>
-            <div className="hero-sticker hero-sticker--top">learn <span>with</span> heart</div>
+            <div className="hero-sticker hero-sticker--top">IVC <span>field</span> guide</div>
             <div className="hero-info-card">
               <div className="hero-info-card__top"><span>Camping programme</span><span className="status-pill"><i /> Registration open</span></div>
               <strong>23rd–28th December 2026</strong>
@@ -197,8 +188,7 @@ export default function Home() {
         <section id="how" className="steps-section section-padding">
           <div className="steps-heading">
             <div>
-              <SectionLabel>How to register</SectionLabel>
-              <h2>Three steps,<br /><em>one minute.</em></h2>
+              <h2>Registration, in<br /><em>three clear steps.</em></h2>
             </div>
             <p>Registration is open to every participant. Siblings can register together, share one payment, and still receive their own IDs.</p>
           </div>
@@ -219,51 +209,41 @@ export default function Home() {
 
         <section id="why" className="story-section section-padding">
           <div className="story-aside">
-            <SectionLabel>About IVC 2026</SectionLabel>
-            <span className="aside-number">01<span>/03</span></span>
-            <p>More than a holiday. A chance to nurture young hearts.</p>
+            <p className="story-aside__title">A community course for every generation.</p>
+            <span className="story-aside__date">23–28 December 2026<br />Ilorin, Nigeria</span>
           </div>
           <div className="story-content">
-            <h2>Nurture young hearts with the light of Islam.</h2>
-            <p className="story-intro">The Islamic Vacation Course is a unique opportunity to build character, deepen faith and create lasting memories in a safe, enriching camping environment.</p>
+            <h2>Learn, reflect and grow together.</h2>
+            <p className="story-intro">The Islamic Vacation Course brings faith, education and community together in a six-day camping programme.</p>
             <div className="story-columns">
-              <p>Hope-Alive Muslim Foundation brings together faith, education and community so every participant can grow in confidence, compassion and responsibility.</p>
-              <p>Six days of camping, learning and friendship in Ilorin, guided by people who care about where these young people are headed.</p>
+              <p>Participants include Muslim children, students, workers and parents. The programme makes room for learning, reflection and shared responsibility.</p>
+              <p>Families can register siblings together, keep each child’s registration ID, and use one family passkey for a shared payment.</p>
             </div>
-            <a href="/register" className="circle-link">Register a participant <ArrowUpRight size={19} /></a>
+            <a href="/register" className="text-link">Register a participant <ArrowUpRight size={16} /></a>
           </div>
         </section>
 
         <section id="programme" className="programme-section section-padding">
           <div className="programme-heading">
             <div>
-              <SectionLabel>The programme</SectionLabel>
-              <h2>Faith, character<br /><em>and lasting memories.</em></h2>
+              <h2>What the course<br /><em>brings together.</em></h2>
             </div>
-            <p>Camping, learning and community come together in a programme designed to leave a lasting mark on every young heart.</p>
+            <p>Three parts of the IVC experience, presented without promises or invented outcomes.</p>
           </div>
-          <div className="rhythm-grid">
-            {rhythmCards.map(({ number, title, copy, icon: Icon, tone }) => (
-              <article className={`rhythm-card rhythm-card--${tone}`} key={title}>
-                <div className="rhythm-card__head"><span>{number}</span><Icon size={22} strokeWidth={1.6} /></div>
+          <div className="programme-index">
+            {rhythmCards.map(({ number, title, copy, icon: Icon }) => (
+              <article className="programme-entry" key={title}>
+                <div className="programme-entry__index"><span>{number}</span><Icon size={20} strokeWidth={1.7} /></div>
                 <h3>{title}</h3>
                 <p>{copy}</p>
-                <span className="rhythm-card__arrow">↗</span>
               </article>
             ))}
           </div>
-          <div className="programme-note"><span className="note-line" /><p><strong>Our promise:</strong> a safe, enriching and impactful experience for every participant.</p><a href="/register">Register a participant <ArrowUpRight size={16} /></a></div>
-        </section>
-
-        <section className="quote-section section-padding">
-          <div className="quote-mark">“</div>
-          <blockquote>“Whoever relieves a believer’s distress of the distresses of this world, Allah will relieve his distress on the Day of Resurrection.”</blockquote>
-          <div className="quote-byline"><span className="quote-avatar">ﷺ</span><span><strong>The reward of giving</strong><small>Sahih Muslim</small></span></div>
+          <div className="programme-note"><span className="note-line" /><p>Registration is saved before payment. Payment is confirmed separately by the Hope-Alive team.</p><a href="/register">Start registration <ArrowUpRight size={16} /></a></div>
         </section>
 
         <section id="details" className="details-section section-padding">
           <div className="details-intro">
-            <SectionLabel>Camp details</SectionLabel>
             <h2>A meaningful<br /><em>December.</em></h2>
             <p>Everything you need to know before you register a participant for this year’s Islamic Vacation Course.</p>
             <a className="button button--ink" href="/register">Register a participant <ArrowUpRight size={18} /></a>
@@ -276,19 +256,8 @@ export default function Home() {
           </div>
         </section>
 
-        <section id="stories" className="stories-section section-padding">
-          <div className="stories-topline"><SectionLabel>Make a difference</SectionLabel><span>02<span>/03</span></span></div>
-          <div className="stories-layout">
-            <div className="stories-copy"><h2>The moments that<br /><em>stay with you.</em></h2><p>We measure a good camp in stronger character, deeper faith, new friendships and memories that keep giving long after the tents come down.</p><a href="/register" className="text-link">Register a participant <span>↘</span></a></div>
-            <div className="story-cards">
-              <article className="story-card story-card--olive"><span className="story-card__quote">“</span><p>Every contribution brings us closer to a safe, enriching and impactful experience for every participant.</p><span className="story-card__name">— Hope-Alive Muslim Foundation</span></article>
-              <article className="story-card story-card--cream"><span className="story-card__quote">“</span><p>Together we can build a brighter future for our youth.</p><span className="story-card__name">— IVC 2026 campaign</span></article>
-            </div>
-          </div>
-        </section>
-
         <section id="faq" className="faq-section section-padding">
-          <div className="faq-heading"><SectionLabel>Good to know</SectionLabel><h2>Questions, answered<br /><em>with care.</em></h2></div>
+          <div className="faq-heading"><h2>Questions, answered<br /><em>with care.</em></h2></div>
           <div className="faq-list">
             {faqs.map((faq, index) => {
               const isOpen = openFaq === index;
@@ -302,9 +271,8 @@ export default function Home() {
 
         <section id="support" className="support-section section-padding">
           <div className="support-copy">
-            <SectionLabel>Support our mission</SectionLabel>
-            <h2>Already registered? <em>Help another family.</em></h2>
-            <p>Donations are entirely optional and separate from registration. They help cover welfare, feeding, accommodation, learning materials and transportation so every participant can take part with dignity.</p>
+            <h2>Give, if you’re able.<br /><em>It’s always optional.</em></h2>
+            <p>Donations are separate from registration fees. Contributions support camp needs including welfare, feeding, accommodation, learning materials and transportation. The team acknowledges donations; this website does not process or automatically verify them.</p>
             <div className="support-needs">
               <span><Check size={15} /> Welfare</span><span><Check size={15} /> Feeding</span><span><Check size={15} /> Accommodation</span><span><Check size={15} /> Learning materials</span><span><Check size={15} /> Transportation</span><span><Check size={15} /> Other camp needs</span>
             </div>
@@ -332,7 +300,6 @@ export default function Home() {
         <section className="final-cta section-padding">
           <div className="final-cta__shape final-cta__shape--one" />
           <div className="final-cta__shape final-cta__shape--two" />
-          <SectionLabel><span className="label-dot label-dot--light" /> Registration is open</SectionLabel>
           <h2>Give them a week<br /><em>they’ll carry forward.</em></h2>
           <p>Reserve a place at the IVC 2026 camping programme. It takes about a minute, and payment can wait.</p>
           <a className="button button--ink button--lg" href="/register">Register a participant <ArrowUpRight size={18} /></a>

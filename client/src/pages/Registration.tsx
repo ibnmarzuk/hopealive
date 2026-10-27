@@ -164,7 +164,9 @@ export default function Registration() {
   });
 
   const visibleParticipants = registrationType === "family" ? participants : participants.slice(0, 1);
-  const estimatedTotal = visibleParticipants.reduce((sum, participant) => sum + (registrationFeeNgn(participant.schoolClass) ?? 0), 0);
+  const estimatedTotal = visibleParticipants.some(participant => !participant.schoolClass)
+    ? null
+    : visibleParticipants.reduce((sum, participant) => sum + (registrationFeeNgn(participant.schoolClass) ?? 0), 0);
 
   /** Re-validates while the user types, but only after a failed submit. */
   const revalidate = (next: Partial<Record<string, unknown>>) => {
@@ -301,7 +303,6 @@ export default function Registration() {
 
       <main className="registration-main">
         <div className="registration-intro">
-          <span className="section-label"><span className="label-dot" /> IVC 2026 · 23rd–28th December</span>
           <h1>{introHeading}</h1>
           <p>{introCopy}</p>
           <div className="registration-trust"><ShieldCheck size={17} /><span>Your place is saved before payment. Keep your registration ID safe — it is how we find and confirm your payment.</span></div>
@@ -317,7 +318,6 @@ export default function Registration() {
           {view === "form" && (
             <form className="simple-form" onSubmit={handleRegister} noValidate>
               <div className="form-heading">
-                <span>Step 1 of 3</span>
                 <h2>Register a child or family.</h2>
                 <p>Each child gets an individual ID. Families share one passkey and can pay with one transfer and receipt.</p>
               </div>
@@ -326,7 +326,7 @@ export default function Registration() {
               {registrationType === "family" && <label>Number of children<select value={participants.length} onChange={event => { const count = Number(event.target.value); setParticipants(current => Array.from({ length: count }, (_, index) => current[index] ?? { studentName: "", schoolClass: "" })); }}><option value={2}>2 children</option><option value={3}>3 children</option><option value={4}>4 children</option><option value={5}>5 children</option><option value={6}>6 children</option></select></label>}
 
               {visibleParticipants.map((participant, index) => (
-                <div className="class-group-note" key={index} style={{ display: "grid", gap: "0.85rem", alignItems: "stretch" }}>
+                <div className="participant-entry" key={index}>
                   <strong>{registrationType === "family" ? `Child ${index + 1}` : "Participant"}</strong>
                   <label>
                     Student / participant full name
@@ -392,7 +392,7 @@ export default function Registration() {
                 {fieldError("guardianPhone") && <small className="field-error">{fieldError("guardianPhone")}</small>}
               </label>
 
-              <div className="payment-card"><div><small>{registrationType === "family" ? "Estimated family total" : "Estimated fee"}</small><strong>{formatNaira(estimatedTotal)}</strong><em>Final quote is saved at registration and uses each class fee.</em></div></div>
+              <div className="payment-card"><div><small>{registrationType === "family" ? "Estimated family total" : "Estimated fee"}</small><strong>{estimatedTotal == null ? "Choose a class to see the fee" : formatNaira(estimatedTotal)}</strong><em>The confirmed fee is saved when you create the registration.</em></div></div>
 
               <label className="form-check">
                 <input
@@ -628,7 +628,7 @@ export default function Registration() {
           <section className="camp-pass-print" aria-label="IVC camp registration pass">
             <header className="camp-pass-print__header">
               <div className="camp-pass-print__brand"><span>HA</span><strong>Hope-Alive Muslim Foundation</strong></div>
-              <div className="camp-pass-print__event"><strong>Islamic Vacation Course 2026</strong><span>Camping programme · Ilorin · 23–28 December 2026</span></div>
+              <div className="camp-pass-print__event"><strong>Islamic Vacation Course 2026</strong><span>Ethical College · Zango Road, Ilorin · 23–28 December 2026</span></div>
             </header>
             <h1>Registration invoice &amp; camp pass</h1>
             <p className="camp-pass-print__notice">Present this pass at camp registration. Payment is not confirmed until the status below says “Payment confirmed.”</p>
@@ -640,7 +640,9 @@ export default function Registration() {
               <dt>Payment status</dt>
               <dd>{paymentLabel(record.verificationStatus)}</dd>
               <dt>Receipt evidence</dt>
-              <dd>{record.receiptStatus === "submitted" ? "Uploaded · pending or completed review" : "Not uploaded"}</dd>
+              <dd>{record.receiptStatus !== "submitted" ? "Not uploaded" : record.verificationStatus === "verified" ? "Uploaded · reviewed" : record.verificationStatus === "rejected" ? "Uploaded · not confirmed" : "Uploaded · pending review"}</dd>
+              <dt>Camp entitlements</dt>
+              <dd>{record.entitlementsEligible ? "Eligible for camp entitlements" : "Pending payment confirmation"}</dd>
             </dl>
             <table className="camp-pass-print__participants">
               <thead><tr><th>Participant</th><th>Class / group</th><th>Registration ID</th><th>Fee</th></tr></thead>
@@ -661,7 +663,7 @@ export default function Registration() {
               <tfoot><tr><th colSpan={3}>Total registration fee</th><th>{record.feeNgn == null ? "—" : formatNaira(record.feeNgn)}</th></tr></tfoot>
             </table>
             <footer className="camp-pass-print__footer">
-              <span>Camp check-in and entitlements are recorded by Hope-Alive staff after payment confirmation.</span>
+              <span>Confirmed payment makes participants eligible for camp entitlements. Hope-Alive staff record arrival at check-in.</span>
               <span>Questions? WhatsApp 08057782932</span>
             </footer>
           </section>

@@ -42,6 +42,13 @@ function paymentSummary(row: AdminRow): { label: string; tone: string } {
   return { label: "Pending", tone: "none" };
 }
 
+function isAwaitingReview(row: AdminRow): boolean {
+  return row.receiptStatus === "submitted" &&
+    row.verificationStatus !== "verified" &&
+    row.verificationStatus !== "rejected" &&
+    (!row.familyCode || row.familyPaymentLead);
+}
+
 function paymentActionClassName(tone: string): string {
   if (tone === "verified") return "payment-button payment-button--verified";
   if (tone === "needs_review") return "payment-button payment-button--review";
@@ -138,6 +145,7 @@ function RegistrationDialog({ row, onClose, onDecision, onCampAction, deciding, 
 export default function Admin() {
   const [search, setSearch] = useState("");
   const [phaseFilter, setPhaseFilter] = useState<"all" | "early" | "second">("all");
+  const [paymentFilter, setPaymentFilter] = useState<"all" | "review" | "pending" | "verified" | "rejected">("all");
   const [openId, setOpenId] = useState<number | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -178,12 +186,15 @@ export default function Admin() {
   });
 
   const rows = registrations.data?.rows ?? [];
+  const awaitingReview = rows.filter(isAwaitingReview).length;
+  const verifiedCount = rows.filter(row => row.verificationStatus === "verified" && (!row.familyCode || row.familyPaymentLead)).length;
+  const rejectedCount = rows.filter(row => row.verificationStatus === "rejected" && (!row.familyCode || row.familyPaymentLead)).length;
   const checkedInCount = rows.filter(row => row.checkedInAt).length;
   const entitlementsEligibleCount = rows.filter(row => row.entitlementsEligible).length;
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase().trim();
-    return rows.filter(item => {
+    const matches = rows.filter(item => {
       const matchesSearch = !query || [
         item.studentName,
         item.registrationNumber,
@@ -197,21 +208,25 @@ export default function Admin() {
       if (!matchesSearch) return false;
 
       const phase = registrationPricingPhase(item.createdAt);
-      if (phaseFilter === "early") return phase === "Early bird";
-      if (phaseFilter === "second") return phase === "Second phase";
+      if (phaseFilter === "early" && phase !== "Early bird") return false;
+      if (phaseFilter === "second" && phase !== "Second phase") return false;
+
+      if (paymentFilter === "review" && !isAwaitingReview(item)) return false;
+      if (paymentFilter === "pending" && (
+        item.verificationStatus === "verified" ||
+        item.verificationStatus === "rejected" ||
+        item.receiptStatus === "submitted"
+      )) return false;
+      if (paymentFilter === "verified" && item.verificationStatus !== "verified") return false;
+      if (paymentFilter === "rejected" && item.verificationStatus !== "rejected") return false;
       return true;
     });
-  }, [phaseFilter, rows, search]);
-
-  const phaseCounts = useMemo(() => {
-    const counts = { early: 0, second: 0 };
-    for (const row of rows) {
-      const phase = registrationPricingPhase(row.createdAt);
-      if (phase === "Early bird") counts.early += 1;
-      else if (phase === "Second phase") counts.second += 1;
-    }
-    return counts;
-  }, [rows]);
+    return matches.sort((a, b) => {
+      const reviewOrder = Number(isAwaitingReview(b)) - Number(isAwaitingReview(a));
+      if (reviewOrder !== 0) return reviewOrder;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+  }, [paymentFilter, phaseFilter, rows, search]);
 
   const openRow = openId == null ? null : rows.find(row => row.id === openId) ?? null;
 
@@ -228,7 +243,6 @@ export default function Admin() {
             }}
           >
             <ShieldCheck size={32} />
-            <span className="section-label">Authorised access</span>
             <h1>Admin<br /><em>sign in.</em></h1>
             <p>Enter your administrator email and password to review participants and confirm payments.</p>
             <label className="admin-login-field">
@@ -253,7 +267,6 @@ export default function Admin() {
       <div className="admin-page admin-page--center">
         <div className="admin-login-card">
           <AlertTriangle size={32} />
-          <span className="section-label">Something went wrong</span>
           <h1>Could not load<br /><em>registrations.</em></h1>
           <p>{friendlyErrorMessage(registrations.error)}</p>
           <button className="button button--ink" onClick={() => registrations.refetch()}><RefreshCw size={17} /> Try again</button>
@@ -266,8 +279,6 @@ export default function Admin() {
   const data = registrations.data;
   const warnings: string[] = [];
   if (data && !data.groupLinkConfigured) warnings.push("WHATSAPP_GROUP_URL is not set; confirmed families will not receive a group link.");
-
-  const awaitingReview = rows.filter(row => row.receiptStatus === "submitted" && row.verificationStatus !== "verified" && row.verificationStatus !== "rejected" && (!row.familyCode || row.familyPaymentLead)).length;
 
   return (
     <div className="admin-page">
@@ -282,19 +293,18 @@ export default function Admin() {
       <main className="admin-main">
         <div className="admin-heading">
           <div>
-            <span className="section-label"><span className="label-dot" /> IVC 2026</span>
-            <h1>Registration<br /><em>dashboard.</em></h1>
+            <h1>Registration<br /><em>field desk.</em></h1>
             <p>{data?.viewerRole === "subadmin" ? "Sub-admin access · view registrations, confirm or reject payments, and check participants in." : "Super-admin access · manage registrations, payments, and camp check-in."}</p>
           </div>
-          <div className="admin-summary">
-            <span><strong>{rows.length}</strong><small>Total registrations</small></span>
-            <span><strong>{phaseCounts.early}</strong><small>Early bird</small></span>
-            <span><strong>{phaseCounts.second}</strong><small>Second phase</small></span>
+          <div className="admin-summary" aria-label="Live registration overview">
+            <span><strong>{rows.length}</strong><small>Total participants</small></span>
+            <span><strong>{awaitingReview}</strong><small>Receipts to review</small></span>
+            <span><strong>{verifiedCount}</strong><small>Payments confirmed</small></span>
+            <span><strong>{rejectedCount}</strong><small>Payments rejected</small></span>
+            <span><strong>{checkedInCount}</strong><small>Checked in</small></span>
+            <span><strong>{entitlementsEligibleCount}</strong><small>Entitlement eligible</small></span>
             <span><strong>₦{(data?.confirmedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Amount confirmed</small></span>
             <span><strong>₦{(data?.pendingExpectedAmountNgn ?? 0).toLocaleString("en-NG")}</strong><small>Expected, pending</small></span>
-            <span><strong>{awaitingReview}</strong><small>Evidence to review</small></span>
-            <span><strong>{checkedInCount}</strong><small>Checked in</small></span>
-            <span><strong>{entitlementsEligibleCount}</strong><small>Eligible for entitlements</small></span>
           </div>
         </div>
 
@@ -303,8 +313,18 @@ export default function Admin() {
         ))}
 
         <div className="admin-toolbar">
-          <label><Search size={17} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by registration ID, name, email or phone" /></label>
+          <label><Search size={17} /><input aria-label="Search registrations" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search ID, name, email or phone" /></label>
           <div className="admin-toolbar__filters">
+            <label className="admin-filter">
+              <span>Payment</span>
+              <select aria-label="Filter by payment status" value={paymentFilter} onChange={event => setPaymentFilter(event.target.value as typeof paymentFilter)}>
+                <option value="all">All</option>
+                <option value="review">Needs review</option>
+                <option value="pending">Awaiting payment</option>
+                <option value="verified">Confirmed</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </label>
             <label className="admin-filter">
               <span>Phase</span>
               <select value={phaseFilter} onChange={event => setPhaseFilter(event.target.value as "all" | "early" | "second")}>
@@ -316,11 +336,12 @@ export default function Admin() {
             <span>{filtered.length} shown</span>
           </div>
         </div>
+        <p className="admin-queue-note">Unresolved receipt submissions appear first, with the oldest waiting registration at the top.</p>
 
         <div className="admin-table-wrap">
-          <table className="admin-table">
+          <table className="admin-table" aria-label="Participant registrations">
             <thead>
-              <tr><th>Participant</th><th>Group</th><th>Registration ID</th><th>Contact</th><th>Payment</th><th>Camp</th><th>Set status</th></tr>
+              <tr><th scope="col">Participant</th><th scope="col">Group</th><th scope="col">Registration ID</th><th scope="col">Contact</th><th scope="col">Payment</th><th scope="col">Camp</th><th scope="col">Set status</th></tr>
             </thead>
             <tbody>
               {filtered.map(item => {
