@@ -135,7 +135,7 @@ export default function Home() {
             <small>Islamic vacation course</small>
           </span>
         </a>
-        <nav className={`main-nav ${menuOpen ? "main-nav--open" : ""}`} aria-label="Main navigation">
+        <nav id="primary-navigation" className={`main-nav ${menuOpen ? "main-nav--open" : ""}`} aria-label="Main navigation">
           <a href="#why" onClick={closeMenu}>About IVC 2026</a>
           <a href="#how" onClick={closeMenu}>How to register</a>
           <a href="#details" onClick={closeMenu}>Camp details</a>
@@ -143,7 +143,7 @@ export default function Home() {
           <a className="nav-cta nav-cta--mobile" href="/register" onClick={closeMenu}>Register now <ArrowUpRight size={16} /></a>
         </nav>
         <a className="nav-cta nav-cta--desktop" href="/register">Register now <ArrowUpRight size={16} /></a>
-        <button className="menu-toggle" onClick={() => setMenuOpen(value => !value)} aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen}>
+        <button className="menu-toggle" onClick={() => setMenuOpen(value => !value)} aria-label={menuOpen ? "Close menu" : "Open menu"} aria-controls="primary-navigation" aria-expanded={menuOpen} type="button">
           {menuOpen ? <X size={22} /> : <Menu size={22} />}
         </button>
       </header>
