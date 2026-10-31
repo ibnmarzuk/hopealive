@@ -178,7 +178,7 @@ export default function Home() {
                   if (nextFallback) {
                     image.src = nextFallback;
                   } else {
-                    image.hidden = true;
+                    image.style.display = "none";
                   }
                 }}
               />
