@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 
 const heroImage = "/islamic-camp-environment.svg";
+const heroImageFallbacks = ["/hopealive-classroom.jpg", "/hopealive-logo.svg"] as const;
 
 const rhythmCards = [
   {
@@ -164,7 +165,23 @@ export default function Home() {
           </div>
           <div className="hero-visual">
             <div className="hero-image-wrap">
-              <img src={heroImage} alt="Illustrated camping and learning scene for the Hope-Alive Islamic Vacation Course" className="hero-image" />
+              <img
+                src={heroImage}
+                alt="Illustrated camping and learning scene for the Hope-Alive Islamic Vacation Course"
+                className="hero-image"
+                fetchPriority="high"
+                decoding="async"
+                onError={event => {
+                  const image = event.currentTarget;
+                  const currentFallbackIndex = heroImageFallbacks.indexOf(image.getAttribute("src") as typeof heroImageFallbacks[number]);
+                  const nextFallback = heroImageFallbacks[currentFallbackIndex + 1];
+                  if (nextFallback) {
+                    image.src = nextFallback;
+                  } else {
+                    image.hidden = true;
+                  }
+                }}
+              />
               <div className="hero-image-wash" />
             </div>
             <div className="hero-sticker hero-sticker--top">IVC <span>field</span> guide</div>
