@@ -5,14 +5,15 @@ if (process.env.VERCEL_ENV !== "production") {
   process.exit(0);
 }
 
-if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) {
-  console.error("[Database] Production deployment is missing DATABASE_URL or POSTGRES_URL.");
+const migrationUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+if (!migrationUrl) {
+  console.error("[Database] Production deployment is missing DATABASE_URL_UNPOOLED, DATABASE_URL or POSTGRES_URL.");
   process.exit(1);
 }
 
 const result = spawnSync("pnpm", ["exec", "drizzle-kit", "migrate"], {
   stdio: "inherit",
-  env: process.env,
+  env: { ...process.env, DATABASE_URL: migrationUrl },
 });
 
 if (result.error) {
