@@ -362,6 +362,24 @@ describe("admin procedures", () => {
     expect(Array.isArray(result.rows)).toBe(true);
   });
 
+  it("allows only a super-admin to delete an entire family", async () => {
+    const created = await caller().registration.createFamily({
+      registrationType: "family",
+      guardianPhone: "0805 778 2932",
+      guardianEmail: "family@example.com",
+      consentToEmail: true,
+      participants: [
+        { studentName: "Maryam Ibrahim", schoolClass: "Basic 4" },
+        { studentName: "Yusuf Ibrahim", schoolClass: "SS 1" },
+      ],
+    });
+    const family = await (await getStore()).findByFamilyCode(created.familyCode!);
+    const lead = family.find(row => row.familyPaymentLead)!;
+    await expect(subAdminCaller().registration.adminDelete({ id: lead.id })).rejects.toThrow();
+    await expect(adminCaller().registration.adminDelete({ id: lead.id })).resolves.toMatchObject({ success: true, deleted: 2 });
+    expect(await (await getStore()).findByFamilyCode(created.familyCode!)).toHaveLength(0);
+  });
+
   it("confirms a payment: sets verified + verifiedBy=admin and emails the group link once", async () => {
     const id = await firstId();
     const result = await adminCaller().registration.adminUpdateStatus({ id, paymentStatus: "verified" });

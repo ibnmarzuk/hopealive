@@ -83,6 +83,8 @@ export interface RegistrationStore {
   updateByNumber(registrationNumber: string, patch: Partial<Registration>): Promise<void>;
   updateById(id: number, patch: Partial<Registration>): Promise<void>;
   updateByFamilyCode(familyCode: string, patch: Partial<Registration>): Promise<void>;
+  /** Deletes one registration, or every member when the row belongs to a family. */
+  deleteByIdOrFamily(id: number): Promise<{ deleted: number; registrationNumbers: string[] }>;
 }
 
 const ADMIN_COLUMNS = {
@@ -244,6 +246,22 @@ class PostgresStore implements RegistrationStore {
 
   async updateByFamilyCode(familyCode: string, patch: Partial<Registration>) {
     await this.db.update(registrations).set(patch).where(eq(registrations.familyCode, familyCode));
+  }
+
+  async deleteByIdOrFamily(id: number) {
+    return this.db.transaction(async tx => {
+      const [registration] = await tx.select({ id: registrations.id, registrationNumber: registrations.registrationNumber, familyCode: registrations.familyCode })
+        .from(registrations)
+        .where(eq(registrations.id, id))
+        .limit(1);
+      if (!registration) return { deleted: 0, registrationNumbers: [] };
+      const family = registration.familyCode
+        ? await tx.select({ id: registrations.id, registrationNumber: registrations.registrationNumber }).from(registrations).where(eq(registrations.familyCode, registration.familyCode))
+        : [registration];
+      if (registration.familyCode) await tx.delete(registrations).where(eq(registrations.familyCode, registration.familyCode));
+      else await tx.delete(registrations).where(eq(registrations.id, id));
+      return { deleted: family.length, registrationNumbers: family.map(row => row.registrationNumber) };
+    });
   }
 }
 
@@ -459,6 +477,18 @@ class MemoryStore implements RegistrationStore {
     if (!family.length) return;
     family.forEach(record => this.apply(record, patch));
     this.persist();
+  }
+
+  async deleteByIdOrFamily(id: number) {
+    const target = this.state.registrations.find(record => record.id === id);
+    if (!target) return { deleted: 0, registrationNumbers: [] };
+    const matches = target.familyCode
+      ? this.state.registrations.filter(record => record.familyCode === target.familyCode)
+      : [target];
+    const ids = new Set(matches.map(record => record.id));
+    this.state.registrations = this.state.registrations.filter(record => !ids.has(record.id));
+    this.persist();
+    return { deleted: matches.length, registrationNumbers: matches.map(record => record.registrationNumber) };
   }
 }
 

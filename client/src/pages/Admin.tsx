@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, Clock3, LogIn, LogOut, RefreshCw, Search, ShieldCheck, UserRoundCheck, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Clock3, LogIn, LogOut, RefreshCw, Search, ShieldCheck, Trash2, UserRoundCheck, X } from "lucide-react";
 import { TRPCClientError } from "@trpc/client";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -59,7 +59,7 @@ function paymentActionClassName(tone: string): string {
 /** Detail view for one registration: all fields, evidence, and manual controls. */
 type CampAction = "check_in";
 
-function RegistrationDialog({ row, onClose, onDecision, onCampAction, deciding, campActionPending, familyRows }: { row: AdminRow; onClose: () => void; onDecision: (status: PaymentStatus, actualAmountNgn?: number) => void; onCampAction: (id: number, action: CampAction) => void; deciding: boolean; campActionPending: boolean; familyRows: AdminRow[] }) {
+function RegistrationDialog({ row, onClose, onDecision, onCampAction, onDelete, deciding, deleting, campActionPending, canDelete, familyRows }: { row: AdminRow; onClose: () => void; onDecision: (status: PaymentStatus, actualAmountNgn?: number) => void; onCampAction: (id: number, action: CampAction) => void; onDelete: () => void; deciding: boolean; deleting: boolean; campActionPending: boolean; canDelete: boolean; familyRows: AdminRow[] }) {
   const hasReceipt = row.receiptStatus === "submitted" && (!row.familyCode || row.familyPaymentLead);
   const imageId = row.familyCode ? familyRows.find(member => member.familyPaymentLead)?.id ?? row.id : row.id;
   const image = trpc.registration.adminReceiptImage.useQuery({ id: imageId }, { enabled: hasReceipt });
@@ -135,6 +135,12 @@ function RegistrationDialog({ row, onClose, onDecision, onCampAction, deciding, 
                 <button className="plain-action plain-action--inline" type="button" disabled={deciding} onClick={() => onDecision("pending_payment")}><Clock3 size={14} /> Reset to pending</button>
               )}
             </div>
+            {canDelete && <div className="receipt-dialog__actions">
+              <button className="button button--outline" type="button" disabled={deleting} onClick={() => {
+                const scope = row.familyCode ? `the entire family (${familyRows.length} participants)` : "this registration";
+                if (window.confirm(`Delete ${scope}? This cannot be undone.`)) onDelete();
+              }}><Trash2 size={16} /> {deleting ? "Deleting…" : row.familyCode ? "Delete family" : "Delete registration"}</button>
+            </div>}
           </div>
         </div>
       </div>
@@ -180,6 +186,15 @@ export default function Admin() {
   const updateCampStatus = trpc.registration.adminUpdateCampStatus.useMutation({
     onSuccess: result => {
       toast.success("Participant checked in.");
+      registrations.refetch();
+    },
+    onError: error => toast.error(friendlyErrorMessage(error)),
+  });
+
+  const deleteRegistration = trpc.registration.adminDelete.useMutation({
+    onSuccess: result => {
+      toast.success(`${result.deleted} registration${result.deleted === 1 ? "" : "s"} deleted.`);
+      setOpenId(null);
       registrations.refetch();
     },
     onError: error => toast.error(friendlyErrorMessage(error)),
@@ -411,9 +426,12 @@ export default function Admin() {
           row={openRow}
           onClose={() => setOpenId(null)}
           deciding={updateStatus.isPending}
+          deleting={deleteRegistration.isPending}
           onDecision={(status, actualAmountNgn) => updateStatus.mutate({ id: openRow.id, paymentStatus: status, actualAmountNgn }, { onSuccess: () => setOpenId(null) })}
           onCampAction={(id, action) => updateCampStatus.mutate({ id, action })}
+          onDelete={() => deleteRegistration.mutate({ id: openRow.id })}
           campActionPending={updateCampStatus.isPending}
+          canDelete={data?.viewerRole === "superadmin"}
           familyRows={rows.filter(row => openRow.familyCode ? row.familyCode === openRow.familyCode : row.id === openRow.id)}
         />
       )}

@@ -505,6 +505,17 @@ export const appRouter = router({
       return result;
     }),
 
+    /** Deletes a registration, or all members of its family, for super-admin cleanup. */
+    adminDelete: superAdminProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const store = await getStore();
+        const registration = await store.findById(input.id);
+        if (!registration) throw new TRPCError({ code: "NOT_FOUND", message: "Registration not found." });
+        const result = await store.deleteByIdOrFamily(input.id);
+        return { success: true, ...result } as const;
+      }),
+
     /**
      * Manual status change — the only way a payment is confirmed. Moving a
      * registration to verified for the first time also sends the group-link
