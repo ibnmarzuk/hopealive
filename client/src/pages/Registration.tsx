@@ -117,7 +117,6 @@ export default function Registration() {
   const [guardianPhone, setGuardianPhone] = useState("");
   const [registrationType, setRegistrationType] = useState<"individual" | "family">("individual");
   const [participants, setParticipants] = useState([{ studentName: "", schoolClass: "" }]);
-  const [consentToEmail, setConsentToEmail] = useState(false);
   const [formErrors, setFormErrors] = useState<FieldErrors>({});
   const [showErrors, setShowErrors] = useState(false);
 
@@ -178,7 +177,7 @@ export default function Registration() {
       participants: nextType === "individual" ? nextParticipants.slice(0, 1) : nextParticipants,
       guardianEmail,
       guardianPhone,
-      consentToEmail,
+      consentToEmail: Boolean(guardianEmail.trim()),
       ...next,
     };
     const parsed = familyRegistrationInputSchema.safeParse(candidate);
@@ -188,7 +187,7 @@ export default function Registration() {
   const handleRegister = (event: FormEvent) => {
     event.preventDefault();
     const participantList = registrationType === "individual" ? [participants[0]] : participants;
-    const parsed = familyRegistrationInputSchema.safeParse({ registrationType, participants: participantList, guardianEmail, guardianPhone, consentToEmail });
+    const parsed = familyRegistrationInputSchema.safeParse({ registrationType, participants: participantList, guardianEmail, guardianPhone, consentToEmail: Boolean(guardianEmail.trim()) });
     if (!parsed.success) {
       setShowErrors(true);
       setFormErrors(collectErrors(parsed.error.issues));
@@ -393,17 +392,6 @@ export default function Registration() {
               </label>
 
               <div className="payment-card"><div><small>{registrationType === "family" ? "Estimated family total" : "Estimated fee"}</small><strong>{estimatedTotal == null ? "Choose a class to see the fee" : formatNaira(estimatedTotal)}</strong><em>The confirmed fee is saved when you create the registration.</em></div></div>
-
-              <label className="form-check">
-                <input
-                  type="checkbox"
-                  checked={consentToEmail}
-                  onChange={event => { setConsentToEmail(event.target.checked); revalidate({ consentToEmail: event.target.checked }); }}
-                  aria-invalid={Boolean(fieldError("consentToEmail"))}
-                />
-                  <span>Email me the passkey, participant IDs and IVC 2026 details (optional).</span>
-              </label>
-              {fieldError("consentToEmail") && <small className="field-error">{fieldError("consentToEmail")}</small>}
 
               {createRegistration.isError && (
                 <p className="form-error"><HelpCircle size={16} /> {createRegistration.error.message}</p>
