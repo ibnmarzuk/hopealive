@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
 import {
   MAX_RECEIPT_DATA_URL_CHARS,
+  MAX_FAMILY_PARTICIPANTS,
   SCHOOL_CLASSES,
   findClassGroup,
   registrationFeeNgn,
@@ -291,7 +292,7 @@ export default function Registration() {
   const introCopy =
     view === "resume" ? "Use the registration ID or family passkey, plus the phone number from registration. We will bring the saved record back."
     : view === "payment" ? "Pay by bank transfer, then upload your receipt. Our team confirms your payment using the ID or family passkey as the reference."
-    : "Register one child or a family of up to six for the Islamic Vacation Course camping programme in Ilorin.";
+    : "Register one child or a family of up to 30 for the Islamic Vacation Course camping programme in Ilorin.";
 
   return (
     <div className="registration-page">
@@ -321,8 +322,8 @@ export default function Registration() {
                 <p>Each child gets an individual ID. Families share one passkey and can pay with one transfer and receipt.</p>
               </div>
 
-              <label>Registration type<select value={registrationType} onChange={event => { const value = event.target.value as "individual" | "family"; setRegistrationType(value); if (value === "individual") setParticipants(current => [current[0]]); else if (participants.length < 2) setParticipants(current => [...current, { studentName: "", schoolClass: "" }]); }}><option value="individual">Individual · one child</option><option value="family">Family · 2 to 6 children</option></select></label>
-              {registrationType === "family" && <label>Number of children<select value={participants.length} onChange={event => { const count = Number(event.target.value); setParticipants(current => Array.from({ length: count }, (_, index) => current[index] ?? { studentName: "", schoolClass: "" })); }}><option value={2}>2 children</option><option value={3}>3 children</option><option value={4}>4 children</option><option value={5}>5 children</option><option value={6}>6 children</option></select></label>}
+              <label>Registration type<select value={registrationType} onChange={event => { const value = event.target.value as "individual" | "family"; setRegistrationType(value); if (value === "individual") setParticipants(current => [current[0]]); else if (participants.length < 2) setParticipants(current => [...current, { studentName: "", schoolClass: "" }]); }}><option value="individual">Individual · one child</option><option value="family">Family · 2 to 30 children</option></select></label>
+              {registrationType === "family" && <label>Number of children<select value={participants.length} onChange={event => { const count = Number(event.target.value); setParticipants(current => Array.from({ length: count }, (_, index) => current[index] ?? { studentName: "", schoolClass: "" })); }}>{Array.from({ length: MAX_FAMILY_PARTICIPANTS - 1 }, (_, index) => index + 2).map(count => <option key={count} value={count}>{count} children</option>)}</select></label>}
 
               {visibleParticipants.map((participant, index) => (
                 <div className="participant-entry" key={index}>
