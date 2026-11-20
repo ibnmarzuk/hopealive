@@ -46,7 +46,7 @@ const registerSteps = [
   {
     number: "01",
     title: "Fill the short form",
-    copy: "Register one child, or a family of up to six. We need each name, class and a phone number. Email is optional.",
+    copy: "Register one child, or a family of 2 to 30. We need each name, class and a phone number. Email is optional.",
     icon: Users,
   },
   {
@@ -151,14 +151,14 @@ export default function Home() {
         <section className="hero-section">
           <div className="hero-copy">
             <h1>A week of faith, <em>learning and lasting memories.</em></h1>
-            <p className="hero-lede">Six days of faith, learning and community in Ilorin. Register one participant or a family of up to six; your place is saved before payment.</p>
+            <p className="hero-lede">Six days of faith, learning and community in Ilorin. Register one participant or a family of up to 30; your place is saved before payment.</p>
             <div className="hero-actions">
               <a className="button button--ink button--lg" href="/register">Register a participant <ArrowUpRight size={18} /></a>
               <a className="text-link" href="/register?mode=continue">Continue a registration <span>↘</span></a>
             </div>
             <ul className="hero-assurances">
               <li><Check size={14} /> Free to register — pay later</li>
-              <li><Check size={14} /> One child or a family of up to six</li>
+              <li><Check size={14} /> One child or a family of up to 30</li>
               <li><Check size={14} /> Email optional</li>
             </ul>
           </div>
