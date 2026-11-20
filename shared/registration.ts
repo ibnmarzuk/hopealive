@@ -29,6 +29,9 @@ export const GROUP_PREFIXES: Record<ClassGroup, string> = {
 /** Flat, ordered list of selectable classes, derived from CLASS_GROUPS. */
 export const SCHOOL_CLASSES: string[] = Object.values(CLASS_GROUPS).flatMap(classes => [...classes]);
 
+/** Maximum number of participants allowed in one family registration. */
+export const MAX_FAMILY_PARTICIPANTS = 30;
+
 /** Returns the class group for a school class, or `null` when unknown. */
 export function findClassGroup(schoolClass: string): ClassGroup | null {
   for (const [group, classes] of Object.entries(CLASS_GROUPS) as [ClassGroup, readonly string[]][]) {
@@ -153,7 +156,7 @@ export const familyRegistrationInputSchema = z.object({
   participants: z.array(z.object({
     studentName: z.string().trim().min(2, "Enter the participant's full name.").max(160, "That name is too long.").refine(value => /\p{L}/u.test(value), "Enter the participant's full name."),
     schoolClass: z.string().trim().refine(value => findClassGroup(value) !== null, "Choose a class from the list."),
-  })).min(1).max(6),
+  })).min(1).max(MAX_FAMILY_PARTICIPANTS),
 }).superRefine((value, ctx) => {
   if (value.registrationType === "individual" && value.participants.length !== 1) {
     ctx.addIssue({ code: "custom", path: ["participants"], message: "Individual registration is for one participant." });
