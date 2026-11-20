@@ -146,6 +146,22 @@ describe("familyRegistrationInputSchema", () => {
     expect(familyRegistrationInputSchema.safeParse(familyValid).success).toBe(true);
   });
 
+  it("accepts a family with thirty participants", () => {
+    const participants = Array.from({ length: 30 }, (_, index) => ({
+      studentName: `Participant ${index + 1}`,
+      schoolClass: "Basic 4",
+    }));
+    expect(familyRegistrationInputSchema.safeParse({ ...familyValid, participants }).success).toBe(true);
+  });
+
+  it("rejects a family with more than thirty participants", () => {
+    const participants = Array.from({ length: 31 }, (_, index) => ({
+      studentName: `Participant ${index + 1}`,
+      schoolClass: "Basic 4",
+    }));
+    expect(familyRegistrationInputSchema.safeParse({ ...familyValid, participants }).success).toBe(false);
+  });
+
   it("rejects a family with one child", () => {
     expect(familyRegistrationInputSchema.safeParse({ ...familyValid, participants: [familyValid.participants[0]] }).success).toBe(false);
   });
