@@ -296,6 +296,7 @@ export default function Admin() {
   const data = registrations.data;
   const warnings: string[] = [];
   if (data && !data.groupLinkConfigured) warnings.push("WHATSAPP_GROUP_URL is not set; confirmed families will not receive a group link.");
+  if (data && !data.receiptAiConfigured) warnings.push("GEMINI_API_KEY is missing; AI receipt screening is not active until a new Gemini key is added to Vercel.");
 
   return (
     <div className="admin-page">
