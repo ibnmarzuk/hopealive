@@ -538,6 +538,7 @@ export const appRouter = router({
         emailConfigured: isEmailConfigured(),
         emailProblem: emailConfigurationProblem(),
         groupLinkConfigured: Boolean(ENV.whatsappGroupUrl),
+        receiptAiConfigured: Boolean(process.env.GEMINI_API_KEY),
         viewerRole: ctx.admin?.role ?? "superadmin",
       };
     }),
