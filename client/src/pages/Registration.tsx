@@ -155,8 +155,12 @@ export default function Registration() {
       if (fileInputRef.current) fileInputRef.current.value = "";
       if (result.outcome === "already_verified") {
         toast.success("Your payment is already confirmed.");
+      } else if (result.receiptCheck?.decision === "pass") {
+        toast.success("AI receipt checks passed. Payment is now awaiting confirmation.");
+      } else if (result.receiptCheck?.decision === "review") {
+        toast.message("Receipt received. AI flagged a few details for admin review.");
       } else {
-        toast.success("Payment evidence submitted — pending review.");
+        toast.success("Receipt submitted for review.");
       }
       window.scrollTo({ top: 0, behavior: "smooth" });
     },
