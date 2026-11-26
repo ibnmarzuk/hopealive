@@ -444,7 +444,7 @@ class MemoryStore implements RegistrationStore {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .map(r => {
         // Omit the heavy image + internal columns, mirroring the SQL projection.
-        const { receiptImage: _img, receiptAnalysis: _an, dedupeKey: _dk, emailMessageId: _mid, updatedAt: _up, ...row } = r;
+        const { receiptImage: _img, dedupeKey: _dk, emailMessageId: _mid, updatedAt: _up, ...row } = r;
         return row;
       });
   }
