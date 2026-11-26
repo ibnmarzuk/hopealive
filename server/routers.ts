@@ -474,20 +474,21 @@ export const appRouter = router({
         });
       }
 
-      // A transaction reference already used by another registration is suspicious.
+      // Detect both reused transaction references and byte-identical receipt images.
       const reference = analysis.transactionReference?.trim().toLowerCase();
-      if (reference) {
-        const existing = await store.listForAdmin();
-        const duplicate = existing.some(row =>
-          row.id !== registration!.id &&
-          row.receiptAnalysis &&
-          typeof row.receiptAnalysis === "object" &&
-          "transactionReference" in row.receiptAnalysis &&
-          String((row.receiptAnalysis as { transactionReference?: unknown }).transactionReference ?? "").trim().toLowerCase() === reference
-        );
-        if (duplicate) {
-          analysis = { ...analysis, decision: "rejected" as const, reasons: [...analysis.reasons, "This transaction reference has already been submitted for another registration."] };
-        }
+      const imageFingerprint = createHash("sha256").update(input.imageDataUrl).digest("hex");
+      const existing = await store.listForAdmin();
+      const duplicate = existing.some(row => {
+        if (row.id === registration!.id || (registration!.familyCode && row.familyCode === registration!.familyCode)) return false;
+        if (!row.receiptAnalysis || typeof row.receiptAnalysis !== "object") return false;
+        const previous = row.receiptAnalysis as { transactionReference?: unknown; imageFingerprint?: unknown };
+        const sameReference = Boolean(reference) && String(previous.transactionReference ?? "").trim().toLowerCase() === reference;
+        const sameImage = previous.imageFingerprint === imageFingerprint;
+        return sameReference || sameImage;
+      });
+      analysis = { ...analysis, imageFingerprint };
+      if (duplicate) {
+        analysis = { ...analysis, decision: "rejected" as const, reasons: [...analysis.reasons, "This receipt image or transaction reference has already been submitted for another registration."] };
       }
 
       if (analysis.decision === "rejected") {
