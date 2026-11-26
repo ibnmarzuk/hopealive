@@ -27,6 +27,7 @@ import {
   sendRegistrationEmail,
 } from "./email/resend";
 import { clientIp, hitRateLimit } from "./rateLimit";
+import { analyzePaymentReceipt } from "./receiptAi";
 import {
   ADMIN_COOKIE,
   ADMIN_COOKIE_MAX_AGE_MS,
@@ -414,9 +415,8 @@ export const appRouter = router({
     }),
 
     /**
-     * Optional payment-evidence upload. Stores the screenshot and marks the
-     * registration as awaiting manual review. Uploading evidence never confirms
-     * a payment — only an admin does that (see `adminUpdateStatus`).
+     * AI screens receipt uploads before they enter the admin payment queue.
+     * AI screening is not proof of funds received; only an administrator confirms payment.
      */
     submitReceipt: publicProcedure.input(receiptUploadSchema).mutation(async ({ input, ctx }) => {
       const ip = clientIp(ctx.req);
@@ -441,15 +441,59 @@ export const appRouter = router({
         registration = (await store.findByFamilyCode(registration.familyCode)).find(row => row.familyPaymentLead) ?? registration;
       }
 
-      // Already confirmed: nothing to do.
       if (registration.verificationStatus === "verified") {
         return { outcome: "already_verified" as const, ...toPublicRegistration(registration) };
       }
-
       if (registration.receiptAttempts >= MAX_RECEIPT_ATTEMPTS) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: `You've reached the upload limit for this registration. Please message us on WhatsApp ${PAYMENT_DETAILS.enquiriesPhone} with your registration ID and we'll confirm it manually.`,
+        });
+      }
+
+      const family = registration.familyCode ? await store.findByFamilyCode(registration.familyCode) : [];
+      const expectedAmountNgn = registration.familyCode
+        ? family.reduce((sum, row) => sum + (registrationFeeNgn(row.schoolClass, row.createdAt) ?? 0), 0)
+        : registrationFeeNgn(registration.schoolClass, registration.createdAt) ?? 0;
+
+      let analysis;
+      try {
+        analysis = await analyzePaymentReceipt({
+          imageDataUrl: input.imageDataUrl,
+          expectedAmountNgn,
+          paymentDetails: PAYMENT_DETAILS,
+          submittedAt: new Date(),
+        });
+      } catch (error) {
+        console.error("[Receipt AI] Analysis failed:", error);
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: error instanceof Error && error.message === "GEMINI_API_KEY is not configured"
+            ? "Receipt screening is temporarily unavailable. Please try again later or contact the organisers."
+            : "We could not screen this receipt right now. Please try again in a moment.",
+        });
+      }
+
+      // A transaction reference already used by another registration is suspicious.
+      const reference = analysis.transactionReference?.trim().toLowerCase();
+      if (reference) {
+        const existing = await store.listForAdmin();
+        const duplicate = existing.some(row =>
+          row.id !== registration!.id &&
+          row.receiptAnalysis &&
+          typeof row.receiptAnalysis === "object" &&
+          "transactionReference" in row.receiptAnalysis &&
+          String((row.receiptAnalysis as { transactionReference?: unknown }).transactionReference ?? "").trim().toLowerCase() === reference
+        );
+        if (duplicate) {
+          analysis = { ...analysis, decision: "rejected" as const, reasons: [...analysis.reasons, "This transaction reference has already been submitted for another registration."] };
+        }
+      }
+
+      if (analysis.decision === "rejected") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `This image did not pass the receipt checks: ${analysis.reasons.join(" ")} Please upload the correct payment receipt.`,
         });
       }
 
@@ -459,25 +503,25 @@ export const appRouter = router({
         receiptSubmittedAt: new Date(),
         receiptAttempts: attempts,
         receiptStatus: "submitted",
-        // Awaiting a human: "claimed" by the registrant, pending verification.
-        paymentStatus: "payment_claimed",
+        paymentStatus: analysis.decision === "pass" ? "payment_claimed" : "under_review",
         verificationStatus: "pending",
+        receiptAnalysis: analysis,
       };
       if (registration.familyCode) await store.updateByFamilyCode(registration.familyCode, { ...receiptPatch, receiptImage: null });
       await store.updateById(registration.id, receiptPatch);
 
-      const family = registration.familyCode ? await store.findByFamilyCode(registration.familyCode) : [];
       const members = family.map(row => ({ registrationNumber: row.registrationNumber, studentName: row.studentName, schoolClass: row.schoolClass, classGroup: row.classGroup, feeNgn: registrationFeeNgn(row.schoolClass, row.createdAt) }));
       return {
         outcome: "submitted" as const,
+        receiptCheck: analysis,
         ...toPublicRegistration({
           ...registration,
-          paymentStatus: "payment_claimed",
+          paymentStatus: receiptPatch.paymentStatus!,
           verificationStatus: "pending",
           receiptStatus: "submitted",
           receiptAttempts: attempts,
         }),
-        ...(family.length ? { members, studentName: `${family.length} participants`, feeNgn: members.reduce((sum, item) => sum + (item.feeNgn ?? 0), 0) } : {}),
+        ...(family.length ? { members, studentName: `${family.length} participants`, feeNgn: expectedAmountNgn } : {}),
       };
     }),
 
