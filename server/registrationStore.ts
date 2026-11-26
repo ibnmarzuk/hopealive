@@ -58,6 +58,7 @@ export type AdminListRow = Pick<
   | "emailError"
   | "receiptSubmittedAt"
   | "receiptAttempts"
+  | "receiptAnalysis"
   | "verifiedAt"
   | "verifiedBy"
   | "checkedInAt"
@@ -105,6 +106,7 @@ const ADMIN_COLUMNS = {
   emailError: registrations.emailError,
   receiptSubmittedAt: registrations.receiptSubmittedAt,
   receiptAttempts: registrations.receiptAttempts,
+  receiptAnalysis: registrations.receiptAnalysis,
   verifiedAt: registrations.verifiedAt,
   verifiedBy: registrations.verifiedBy,
   checkedInAt: registrations.checkedInAt,
