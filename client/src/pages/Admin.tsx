@@ -64,6 +64,7 @@ function RegistrationDialog({ row, onClose, onDecision, onCampAction, onDelete, 
   const imageId = row.familyCode ? familyRows.find(member => member.familyPaymentLead)?.id ?? row.id : row.id;
   const image = trpc.registration.adminReceiptImage.useQuery({ id: imageId }, { enabled: hasReceipt });
   const familyTotal = row.familyCode ? familyRows.reduce((sum, member) => sum + (member.feeNgn ?? 0), 0) : row.feeNgn ?? 0;
+  const receiptAi = row.receiptAnalysis as { decision?: string; bankOrPlatform?: string | null; senderName?: string | null; receiverName?: string | null; amountNgn?: number | null; transactionDateTime?: string | null; transactionReference?: string | null; confidence?: number; reasons?: string[]; transactionAgeMinutes?: number | null } | null;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) onClose(); }}>
@@ -100,6 +101,7 @@ function RegistrationDialog({ row, onClose, onDecision, onCampAction, onDelete, 
               <dt>Registered</dt><dd>{formatDate(row.createdAt)}</dd>
               <dt>Pricing phase</dt><dd><span className={`pricing-tag pricing-tag--${registrationPricingPhase(row.createdAt) === "Early bird" ? "early" : registrationPricingPhase(row.createdAt) === "Second phase" ? "second" : "none"}`}>{registrationPricingPhase(row.createdAt)}</span></dd>
               {hasReceipt && <><dt>Evidence sent</dt><dd>{formatDate(row.receiptSubmittedAt)} {row.receiptAttempts > 1 ? `(${row.receiptAttempts} uploads)` : ""}</dd></>}
+              {receiptAi && <><dt>AI receipt screening</dt><dd>{receiptAi.decision === "pass" ? "Initial checks passed" : receiptAi.decision === "rejected" ? "Rejected by AI checks" : "Flagged for review"}</dd>{receiptAi.bankOrPlatform && <><dt>Bank / platform</dt><dd>{receiptAi.bankOrPlatform}</dd></>}{receiptAi.senderName && <><dt>Sender</dt><dd>{receiptAi.senderName}</dd></>}{receiptAi.receiverName && <><dt>Receiver</dt><dd>{receiptAi.receiverName}</dd></>}{receiptAi.amountNgn != null && <><dt>Amount on receipt</dt><dd>₦{receiptAi.amountNgn.toLocaleString("en-NG")}</dd></>}{receiptAi.transactionDateTime && <><dt>Transaction time</dt><dd>{formatDate(receiptAi.transactionDateTime)}{receiptAi.transactionAgeMinutes != null ? ` · ${Math.max(0, receiptAi.transactionAgeMinutes)} minutes before submission` : ""}</dd></>}{receiptAi.transactionReference && <><dt>Transaction reference</dt><dd><code>{receiptAi.transactionReference}</code></dd></>}{receiptAi.confidence != null && <><dt>AI confidence</dt><dd>{Math.round(receiptAi.confidence * 100)}%</dd></>}{receiptAi.reasons?.length ? <><dt>AI notes</dt><dd>{receiptAi.reasons.join(" ")}</dd></> : null}</>}
               {row.verifiedAt && <><dt>Confirmed</dt><dd>{formatDate(row.verifiedAt)} {row.verifiedBy ? `(${row.verifiedBy})` : ""}</dd></>}
             </dl>
             {row.familyCode && <div className="class-group-note">{familyRows.map(member => <div key={member.id}>{member.studentName} · {member.schoolClass} · {member.registrationNumber} · ₦{(member.feeNgn ?? 0).toLocaleString("en-NG")}</div>)}</div>}
